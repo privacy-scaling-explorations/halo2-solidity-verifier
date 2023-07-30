@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 regex = { version = "1", default_features = false }
-serde = { version = "1.0.126", features = ["derive"] }
 log = { version = "0.4.17", default_features = false }
 
 

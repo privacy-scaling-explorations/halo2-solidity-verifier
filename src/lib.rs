@@ -30,43 +30,17 @@
 pub mod utils;
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-type Decimals = u8;
-type Call = String;
-
-const ATTESTDATA_SOL: &str = include_str!("../contracts/AttestData.sol");
 const VERIFIERBASE_SOL: &str = include_str!("../contracts/VerifierBase.sol");
-
-/// Defines the view only calls to accounts to fetch the on-chain input data.
-/// This data will be included as part of the first elements in the publicInputs
-/// for the sol evm verifier and will be  verifyWithDataAttestation.sol
-#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialOrd, PartialEq)]
-pub struct CallsToAccount {
-    /// A vector of tuples, where index 0 of tuples
-    /// are the byte strings representing the ABI encoded function calls to
-    /// read the data from the address. This call must return a single
-    /// elementary type (<https://docs.soliditylang.org/en/v0.8.20/abi-spec.html#types>).
-    /// The second index of the tuple is the number of decimals for f32 conversion.
-    /// We don't support dynamic types currently.
-    pub call_data: Vec<(Call, Decimals)>,
-    /// Address of the contract to read the data from.
-    pub address: String,
-}
 
 /// Reads in raw bytes code and generates equivalent .sol file
 /// Can optionally attest to on-chain inputs
-pub fn fix_verifier_sol(
-    input_file: PathBuf,
-    num_instances: u32,
-    input_data: Option<(u32, Vec<CallsToAccount>)>,
-    output_data: Option<Vec<CallsToAccount>>,
-) -> Result<String, Box<dyn Error>> {
+pub fn fix_verifier_sol(input_file: PathBuf, num_instances: u32) -> Result<String, Box<dyn Error>> {
     let mut transcript_addrs: Vec<u32> = Vec::new();
     let mut modified_lines: Vec<String> = Vec::new();
 
@@ -296,37 +270,7 @@ pub fn fix_verifier_sol(
     // get the max transcript addr
     let max_transcript_addr = transcript_addrs.iter().max().unwrap() / 32;
 
-    let contract = if input_data.is_some() || output_data.is_some() {
-        let mut accounts_len = 0;
-        let mut contract = ATTESTDATA_SOL.to_string();
-        // fill in the quantization params and total calls
-        // as constants to the contract to save on gas
-        if let Some(input_data) = input_data {
-            let input_calls: usize = input_data.1.iter().map(|v| v.call_data.len()).sum();
-            let input_scale = input_data.0;
-            accounts_len = input_data.1.len();
-            contract = contract.replace(
-                "uint public constant INPUT_SCALE = 1 << 0;",
-                &format!("uint public constant INPUT_SCALE = 1 << {};", input_scale),
-            );
-
-            contract = contract.replace(
-                "uint256 constant INPUT_CALLS = 0;",
-                &format!("uint256 constant INPUT_CALLS = {};", input_calls),
-            );
-        }
-        if let Some(output_data) = output_data {
-            let output_calls: usize = output_data.iter().map(|v| v.call_data.len()).sum();
-            accounts_len += output_data.len();
-            contract = contract.replace(
-                "uint256 constant OUTPUT_CALLS = 0;",
-                &format!("uint256 constant OUTPUT_CALLS = {};", output_calls),
-            );
-        }
-        contract.replace("AccountCall[]", &format!("AccountCall[{}]", accounts_len))
-    } else {
-        VERIFIERBASE_SOL.to_string()
-    };
+    let contract = VERIFIERBASE_SOL.to_string();
 
     // Insert the max_transcript_addr into the contract string at the correct position.
     let mut contract = contract.replace(

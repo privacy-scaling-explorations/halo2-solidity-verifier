@@ -504,7 +504,7 @@ pub mod tests {
         let _ = f.write(yul_code.as_bytes());
 
         // now get sol verifier
-        let sol_contract = fix_verifier_sol(yul_code_path.clone(), 1, None, None).unwrap();
+        let sol_contract = fix_verifier_sol(yul_code_path.clone(), 1).unwrap();
 
         let sol_code_path = PathBuf::from("test.sol");
         let mut f = File::create(sol_code_path.clone()).unwrap();
