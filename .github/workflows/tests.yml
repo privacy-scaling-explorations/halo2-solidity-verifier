@@ -1,0 +1,50 @@
+name: tests
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+  pull_request:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2023-04-17
+          override: true
+          components: rustfmt, clippy
+      - name: Build
+        run: cargo build --verbose
+
+  verifier-tests:
+    runs-on: ubuntu-latest-16-cores
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2023-04-17
+          override: true
+          components: rustfmt, clippy
+      - uses: baptiste0928/cargo-install@v1
+        with:
+          crate: cargo-nextest
+          locked: true
+      - name: Install solc
+        run: (hash svm 2>/dev/null || cargo install svm-rs) && svm install 0.8.20 && solc --version
+      - name: Install Anvil
+        run: cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil
+      - name: Run tests
+        run: cargo nextest run
