@@ -31,7 +31,7 @@ pub struct SolidityGenerator<'a, C: CurveAffine> {
     acc_encoding: Option<AccumulatorEncoding>,
     g1: [U256; 2],
     g2: [U256; 4],
-    s_g2: [U256; 4],
+    neg_s_g2: [U256; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +65,7 @@ impl<'a, C: CurveAffine> SolidityGenerator<'a, C> {
         let g1 = param.get_g()[0];
         let g1 = g1_to_u256(g1);
         let g2 = g2_to_u256(param.g2());
-        let s_g2 = g2_to_u256(-param.s_g2());
+        let neg_s_g2 = g2_to_u256(-param.s_g2());
 
         Self {
             vk,
@@ -73,7 +73,7 @@ impl<'a, C: CurveAffine> SolidityGenerator<'a, C> {
             acc_encoding,
             g1,
             g2,
-            s_g2,
+            neg_s_g2,
         }
     }
 }
@@ -83,76 +83,102 @@ where
     C::Base: PrimeField<Repr = [u8; 0x20]>,
     C::Scalar: PrimeField<Repr = [u8; 0x20]>,
 {
-    pub fn generate(&self, _: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+    pub fn render_into(&self, _verifier_writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
         todo!()
     }
 
-    pub fn generate_separately(
-        &self,
-        vk_writer: &mut impl fmt::Write,
-        verifier_writer: &mut impl fmt::Write,
-    ) -> Result<(), fmt::Error> {
-        let (vk, verifier) = self.generate_inner();
+    pub fn render(&self) -> Result<String, fmt::Error> {
+        let mut verifier_output = String::new();
+        self.render_into(&mut verifier_output)?;
+        Ok(verifier_output)
+    }
 
-        vk.render(vk_writer)?;
+    pub fn render_into_separately(
+        &self,
+        verifier_writer: &mut impl fmt::Write,
+        vk_writer: &mut impl fmt::Write,
+    ) -> Result<(), fmt::Error> {
+        let verifier = self.generate_verifier(true);
+        let vk = self.generate_vk();
+
         verifier.render(verifier_writer)?;
+        vk.render(vk_writer)?;
 
         Ok(())
     }
 
-    fn generate_inner(&self) -> (Halo2VerifyingKey, Halo2Verifier) {
-        let num_neg_lagranges = self.vk.cs().blinding_factors() + 1;
-        let num_quotients = self.vk.get_domain().get_quotient_poly_degree();
-        let (num_constants, vk_chunks) = {
+    pub fn render_separately(&self) -> Result<(String, String), fmt::Error> {
+        let mut verifier_output = String::new();
+        let mut vk_output = String::new();
+        self.render_into_separately(&mut verifier_output, &mut vk_output)?;
+        Ok((verifier_output, vk_output))
+    }
+
+    fn generate_vk(&self) -> Halo2VerifyingKey {
+        let constants = {
             let domain = self.vk.get_domain();
-            let digest = fe_to_u256(self.vk.transcript_repr());
+            let lagrange_last = self.vk.cs().blinding_factors() as u64 + 1;
+            let vk_digest = fe_to_u256(self.vk.transcript_repr());
             let k = U256::from(domain.k());
             let n_inv = fe_to_u256(C::Scalar::from(1 << domain.k()).invert().unwrap());
             let omega = fe_to_u256(domain.get_omega());
             let omega_inv = fe_to_u256(domain.get_omega_inv());
-            let omega_inv_to_l = fe_to_u256(
-                domain
-                    .get_omega_inv()
-                    .pow_vartime([num_neg_lagranges as u64]),
-            );
+            let omega_inv_to_l = fe_to_u256(domain.get_omega_inv().pow_vartime([lagrange_last]));
             let num_instances = U256::from(self.num_instances);
-            let fixed_commitments = self.vk.fixed_commitments().iter().flat_map(g1_to_u256::<C>);
-            let permutation_commitments = self
-                .vk
-                .permutation()
-                .commitments()
-                .iter()
-                .flat_map(g1_to_u256::<C>);
-            let constants = chain![
-                [
-                    digest,
-                    k,
-                    n_inv,
-                    omega,
-                    omega_inv,
-                    omega_inv_to_l,
-                    num_instances,
-                    U256::from(self.acc_encoding.is_some()),
-                    self.acc_encoding
-                        .map(|acc_encoding| U256::from(acc_encoding.offset))
-                        .unwrap_or_default(),
-                    self.acc_encoding
-                        .map(|acc_encoding| U256::from(acc_encoding.num_limbs))
-                        .unwrap_or_default(),
-                    self.acc_encoding
-                        .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
-                        .unwrap_or_default(),
-                ],
-                self.g1,
-                self.g2,
-                self.s_g2
-            ]
-            .collect_vec();
-            (
-                constants.len(),
-                chain![constants, fixed_commitments, permutation_commitments,].collect_vec(),
-            )
+            let has_accumulator = U256::from(self.acc_encoding.is_some());
+            let acc_offset = self
+                .acc_encoding
+                .map(|acc_encoding| U256::from(acc_encoding.offset))
+                .unwrap_or_default();
+            let num_acc_limbs = self
+                .acc_encoding
+                .map(|acc_encoding| U256::from(acc_encoding.num_limbs))
+                .unwrap_or_default();
+            let num_acc_limb_bits = self
+                .acc_encoding
+                .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
+                .unwrap_or_default();
+            chain![[
+                ("vk_digest", vk_digest),
+                ("k", k),
+                ("n_inv", n_inv),
+                ("omega", omega),
+                ("omega_inv", omega_inv),
+                ("omega_inv_to_l", omega_inv_to_l),
+                ("num_instances", num_instances),
+                ("has_accumulator", has_accumulator),
+                ("acc_offset", acc_offset),
+                ("num_acc_limbs", num_acc_limbs),
+                ("num_acc_limb_bits", num_acc_limb_bits),
+                ("g1_x", self.g1[0]),
+                ("g1_y", self.g1[1]),
+                ("g2_x_1", self.g2[0]),
+                ("g2_x_2", self.g2[1]),
+                ("g2_y_1", self.g2[2]),
+                ("g2_y_2", self.g2[3]),
+                ("neg_s_g2_x_1", self.neg_s_g2[0]),
+                ("neg_s_g2_x_2", self.neg_s_g2[1]),
+                ("neg_s_g2_y_1", self.neg_s_g2[2]),
+                ("neg_s_g2_y_2", self.neg_s_g2[3]),
+            ],]
+            .collect()
         };
+        let fixed_commitments = chain![self.vk.fixed_commitments()]
+            .flat_map(g1_to_u256::<C>)
+            .collect();
+        let permutation_commitments = chain![self.vk.permutation().commitments()]
+            .flat_map(g1_to_u256::<C>)
+            .collect();
+        Halo2VerifyingKey {
+            constants,
+            fixed_commitments,
+            permutation_commitments,
+        }
+    }
+
+    fn generate_verifier(&self, _separate: bool) -> Halo2Verifier {
+        let num_neg_lagranges = self.vk.cs().blinding_factors() + 1;
+        let num_quotients = self.vk.get_domain().get_quotient_poly_degree();
         let permutation_columns = self.vk.cs().permutation().get_columns();
         let permutation_chunk_len = self.vk.cs().degree() - 2;
         let num_permutation_zs = permutation_columns.chunks(permutation_chunk_len).count();
@@ -217,8 +243,9 @@ where
             ])
             .unwrap()
         };
-        let fixed_comm_mptr = vk_mptr + 0x20 * num_constants;
-        let vk_len = 0x20 * vk_chunks.len();
+        let vk = self.generate_vk();
+        let vk_len = vk.len();
+        let fixed_comm_mptr = vk_mptr + 0x20 * vk.constants.len();
         let challenge_mptr = vk_mptr + vk_len;
         let theta_mptr =
             challenge_mptr + 0x20 * (num_challenges[..=max_phase].iter().sum::<usize>() - 1);
@@ -911,8 +938,7 @@ where
             .collect_vec()
         };
 
-        let vk = Halo2VerifyingKey { chunks: vk_chunks };
-        let verifier = Halo2Verifier {
+        Halo2Verifier {
             vk_mptr,
             vk_len,
             num_neg_lagranges,
@@ -927,9 +953,7 @@ where
             instance_eval_mptr,
             expression_computations,
             pcs_computations,
-        };
-
-        (vk, verifier)
+        }
     }
 }
 

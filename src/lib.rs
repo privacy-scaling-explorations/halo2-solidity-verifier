@@ -9,21 +9,39 @@ mod transcript;
 pub use codegen::SolidityGenerator;
 pub use transcript::{ChallengeEvm, Keccak256Transcript};
 
+pub const FN_SIG_VERIFY_PROOF: [u8; 4] = [0x1e, 0x8e, 0x1e, 0x13];
+pub const FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS: [u8; 4] = [0xaf, 0x83, 0xa1, 0x8d];
+
 #[cfg(test)]
 mod test;
 
-pub fn encode_calldata<F>(vk_address: &[u8; 20], proof: &[u8], instances: &[F]) -> Vec<u8>
+pub fn encode_calldata<F>(
+    vk_address: Option<impl Borrow<[u8; 20]>>,
+    proof: &[u8],
+    instances: &[F],
+) -> Vec<u8>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
+    let (fn_sig, offset) = if vk_address.is_some() {
+        (FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS, 0x60)
+    } else {
+        (FN_SIG_VERIFY_PROOF, 0x40)
+    };
+    let vk_address = if let Some(vk_address) = vk_address {
+        U256::try_from_be_slice(vk_address.borrow())
+            .unwrap()
+            .to_be_bytes::<0x20>()
+            .to_vec()
+    } else {
+        Vec::new()
+    };
     let num_instances = instances.len();
     chain![
-        [0xaf, 0x83, 0xa1, 0x8d],
-        U256::try_from_be_slice(vk_address)
-            .unwrap()
-            .to_be_bytes::<0x20>(),
-        U256::from(0x60).to_be_bytes::<0x20>(),
-        U256::from(0x80 + proof.len()).to_be_bytes::<0x20>(),
+        fn_sig,
+        vk_address,
+        U256::from(offset).to_be_bytes::<0x20>(),
+        U256::from(offset + 0x20 + proof.len()).to_be_bytes::<0x20>(),
         U256::from(proof.len()).to_be_bytes::<0x20>(),
         proof.iter().cloned(),
         U256::from(num_instances).to_be_bytes::<0x20>(),

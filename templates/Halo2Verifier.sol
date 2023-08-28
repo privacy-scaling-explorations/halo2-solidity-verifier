@@ -26,10 +26,10 @@ contract Halo2Verifier {
     uint256 internal constant            G2_X_2_MPTR = {{ (vk_mptr + 14 * 32)|hex() }};
     uint256 internal constant            G2_Y_1_MPTR = {{ (vk_mptr + 15 * 32)|hex() }};
     uint256 internal constant            G2_Y_2_MPTR = {{ (vk_mptr + 16 * 32)|hex() }};
-    uint256 internal constant          S_G2_X_1_MPTR = {{ (vk_mptr + 17 * 32)|hex() }};
-    uint256 internal constant          S_G2_X_2_MPTR = {{ (vk_mptr + 18 * 32)|hex() }};
-    uint256 internal constant          S_G2_Y_1_MPTR = {{ (vk_mptr + 19 * 32)|hex() }};
-    uint256 internal constant          S_G2_Y_2_MPTR = {{ (vk_mptr + 20 * 32)|hex() }};
+    uint256 internal constant      NEG_S_G2_X_1_MPTR = {{ (vk_mptr + 17 * 32)|hex() }};
+    uint256 internal constant      NEG_S_G2_X_2_MPTR = {{ (vk_mptr + 18 * 32)|hex() }};
+    uint256 internal constant      NEG_S_G2_Y_1_MPTR = {{ (vk_mptr + 19 * 32)|hex() }};
+    uint256 internal constant      NEG_S_G2_Y_2_MPTR = {{ (vk_mptr + 20 * 32)|hex() }};
 
     uint256 internal constant CHALLENGE_MPTR = {{ challenge_mptr|hex() }};
 
@@ -175,10 +175,10 @@ contract Halo2Verifier {
                 mstore(0xa0, mload(G2_Y_2_MPTR))
                 mstore(0xc0, rhs_x)
                 mstore(0xe0, rhs_y)
-                mstore(0x100, mload(S_G2_X_1_MPTR))
-                mstore(0x120, mload(S_G2_X_2_MPTR))
-                mstore(0x140, mload(S_G2_Y_1_MPTR))
-                mstore(0x160, mload(S_G2_Y_2_MPTR))
+                mstore(0x100, mload(NEG_S_G2_X_1_MPTR))
+                mstore(0x120, mload(NEG_S_G2_X_2_MPTR))
+                mstore(0x140, mload(NEG_S_G2_Y_1_MPTR))
+                mstore(0x160, mload(NEG_S_G2_Y_2_MPTR))
                 ret := and(success, staticcall(gas(), 0x08, 0x00, 0x180, 0x00, 0x20))
                 ret := and(ret, mload(0x00))
             }

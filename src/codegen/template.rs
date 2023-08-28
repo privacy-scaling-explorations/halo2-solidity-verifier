@@ -5,7 +5,16 @@ use std::fmt;
 #[derive(Template)]
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {
-    pub(crate) chunks: Vec<U256>,
+    pub(crate) constants: Vec<(&'static str, U256)>,
+    pub(crate) fixed_commitments: Vec<U256>,
+    pub(crate) permutation_commitments: Vec<U256>,
+}
+
+impl Halo2VerifyingKey {
+    pub(crate) fn len(&self) -> usize {
+        (self.constants.len() + self.fixed_commitments.len() + self.permutation_commitments.len())
+            * 0x20
+    }
 }
 
 #[derive(Template)]
@@ -50,7 +59,9 @@ mod filters {
 
     pub fn hex(value: impl LowerHex) -> ::askama::Result<String> {
         let value = format!("{value:x}");
-        Ok(if value.len() % 2 == 1 {
+        Ok(if value == "0" {
+            format!("0x{}", "0".repeat(64))
+        } else if value.len() % 2 == 1 {
             format!("0x0{value}")
         } else {
             format!("0x{value}")

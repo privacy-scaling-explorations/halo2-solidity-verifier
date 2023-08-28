@@ -1,61 +1,101 @@
-use crate::codegen::{AccumulatorEncoding, SolidityGenerator};
-use halo2_proofs::halo2curves::bn256::Bn256;
-use rand::{rngs::StdRng, SeedableRng};
+use crate::{
+    codegen::{AccumulatorEncoding, SolidityGenerator},
+    encode_calldata, FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
+};
+use halo2_proofs::halo2curves::bn256::{Bn256, Fr};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use ruint::aliases::U256;
+use sha3::Digest;
 use std::{fs::File, io::Write};
 
-const DIR_GENERATED: &str = "./target/generated";
+#[test]
+fn function_signature() {
+    for (fn_name, fn_sig) in [
+        ("verifyProof(bytes,uint256[])", FN_SIG_VERIFY_PROOF),
+        (
+            "verifyProof(address,bytes,uint256[])",
+            FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
+        ),
+    ] {
+        assert_eq!(
+            <[u8; 32]>::from(sha3::Keccak256::digest(fn_name))[..4],
+            fn_sig,
+        );
+    }
+}
 
 #[test]
-fn generate_separately() {
-    let k = 9;
-    let acc_encoding = Some(AccumulatorEncoding {
+fn render_separately_huge() {
+    run_render_separately::<halo2::huge::HugeCircuit<Bn256>>()
+}
+
+#[test]
+fn render_separately_maingate() {
+    run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>()
+}
+
+fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
+    let acc_encoding = AccumulatorEncoding {
         offset: 0,
         num_limbs: 4,
         num_limb_bits: 68,
-    });
-    let (param, vk, instances, proof) = halo2::create_testdata_shplonk::<
-        Bn256,
-        halo2::huge::HugeCircuit<Bn256>,
-    >(k, acc_encoding, StdRng::seed_from_u64(0));
+    }
+    .into();
+    let (param, vk, instances, _) =
+        halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
 
-    let mut vk_solidity = String::new();
-    let mut verifier_solidity = String::new();
-    SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding)
-        .generate_separately(&mut vk_solidity, &mut verifier_solidity)
-        .unwrap();
-
-    std::fs::create_dir_all(DIR_GENERATED).unwrap();
-    File::create(format!("{DIR_GENERATED}/Halo2VerifyingKey.sol"))
-        .unwrap()
-        .write_all(vk_solidity.as_bytes())
-        .unwrap();
-    File::create(format!("{DIR_GENERATED}/Halo2Verifier.sol"))
-        .unwrap()
-        .write_all(verifier_solidity.as_bytes())
-        .unwrap();
-
-    let vk_bytecode = ethereum::compile_solidity(&vk_solidity);
+    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+    let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
     let verifier_bytecode = ethereum::compile_solidity(&verifier_solidity);
-    println!("Verifier deployment code size: {}", verifier_bytecode.len());
+    let verifier_deployment_codesize = verifier_bytecode.len();
 
     let mut evm = ethereum::Evm::new();
-    let vk_address = evm.create(vk_bytecode);
     let verifier_address = evm.create(verifier_bytecode);
-    println!(
-        "Verifier runtime code size: {}",
-        evm.codesize(verifier_address)
-    );
+    let verifier_runtime_codesize = evm.codesize(verifier_address);
 
-    let (gas_cost, output) = evm.call(
-        verifier_address,
-        crate::encode_calldata(&vk_address.0, &proof, &instances),
-    );
-    assert_eq!(
-        U256::from_be_bytes::<0x20>(output.try_into().unwrap()),
-        U256::from(1)
-    );
-    println!("Gas cost: {gas_cost}");
+    println!("Verifier deployment code size: {verifier_deployment_codesize}");
+    println!("Verifier runtime code size: {verifier_runtime_codesize}");
+
+    for k in T::min_k()..T::min_k() + 4 {
+        let (param, vk, instances, proof) =
+            halo2::create_testdata_shplonk::<Bn256, T>(k, acc_encoding, std_rng());
+        let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+
+        let (_, vk_solidity) = generator.render_separately().unwrap();
+        let vk_bytecode = ethereum::compile_solidity(&vk_solidity);
+        let vk_address = evm.create(vk_bytecode);
+
+        let (gas_cost, output) = evm.call(
+            verifier_address,
+            encode_calldata(vk_address.0.into(), &proof, &instances),
+        );
+        assert_eq!(
+            U256::from_be_bytes::<0x20>(output.try_into().unwrap()),
+            U256::from(1)
+        );
+        println!("Gas cost: {gas_cost}");
+    }
+}
+
+fn std_rng() -> impl RngCore + Clone {
+    StdRng::seed_from_u64(0)
+}
+
+#[allow(dead_code)]
+fn save_generated(verifier: impl AsRef<str>, vk: Option<impl AsRef<str>>) {
+    const DIR_GENERATED: &str = "./target/generated";
+
+    std::fs::create_dir_all(DIR_GENERATED).unwrap();
+    File::create(format!("{DIR_GENERATED}/Halo2Verifier.sol"))
+        .unwrap()
+        .write_all(verifier.as_ref().as_bytes())
+        .unwrap();
+    if let Some(vk) = vk {
+        File::create(format!("{DIR_GENERATED}/Halo2VerifyingKey.sol"))
+            .unwrap()
+            .write_all(vk.as_ref().as_bytes())
+            .unwrap();
+    }
 }
 
 mod ethereum {
@@ -204,6 +244,8 @@ mod halo2 {
     use std::{borrow::Borrow, fmt::Debug};
 
     pub trait TestCircuit<F: Field>: Circuit<F> {
+        fn min_k() -> u32;
+
         fn new(acc_encoding: Option<AccumulatorEncoding>, rng: impl RngCore) -> Self;
 
         fn instances(&self) -> Vec<F>;
@@ -360,6 +402,10 @@ mod halo2 {
             <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
             M::Scalar: PrimeField<Repr = [u8; 0x20]>,
         {
+            fn min_k() -> u32 {
+                6
+            }
+
             fn new(acc_encoding: Option<AccumulatorEncoding>, mut rng: impl RngCore) -> Self {
                 let instances = if let Some(acc_encoding) = acc_encoding {
                     random_accumulator_limbs::<M>(acc_encoding, rng)
@@ -542,6 +588,10 @@ mod halo2 {
             <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
             M::Scalar: PrimeField<Repr = [u8; 0x20]>,
         {
+            fn min_k() -> u32 {
+                9
+            }
+
             fn new(acc_encoding: Option<AccumulatorEncoding>, mut rng: impl RngCore) -> Self {
                 let instances = if let Some(acc_encoding) = acc_encoding {
                     random_accumulator_limbs::<M>(acc_encoding, rng)
