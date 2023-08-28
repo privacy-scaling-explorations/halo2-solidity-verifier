@@ -83,8 +83,8 @@ where
     C::Base: PrimeField<Repr = [u8; 0x20]>,
     C::Scalar: PrimeField<Repr = [u8; 0x20]>,
 {
-    pub fn render_into(&self, _verifier_writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
-        todo!()
+    pub fn render_into(&self, verifier_writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
+        self.generate_verifier(false).render(verifier_writer)
     }
 
     pub fn render(&self) -> Result<String, fmt::Error> {
@@ -98,12 +98,8 @@ where
         verifier_writer: &mut impl fmt::Write,
         vk_writer: &mut impl fmt::Write,
     ) -> Result<(), fmt::Error> {
-        let verifier = self.generate_verifier(true);
-        let vk = self.generate_vk();
-
-        verifier.render(verifier_writer)?;
-        vk.render(vk_writer)?;
-
+        self.generate_verifier(true).render(verifier_writer)?;
+        self.generate_vk().render(vk_writer)?;
         Ok(())
     }
 
@@ -176,7 +172,7 @@ where
         }
     }
 
-    fn generate_verifier(&self, _separate: bool) -> Halo2Verifier {
+    fn generate_verifier(&self, separate: bool) -> Halo2Verifier {
         let num_neg_lagranges = self.vk.cs().blinding_factors() + 1;
         let num_quotients = self.vk.get_domain().get_quotient_poly_degree();
         let permutation_columns = self.vk.cs().permutation().get_columns();
@@ -219,7 +215,7 @@ where
             + 5 * self.vk.cs().lookups().len();
         let proof_len = 0x40 * num_witnesses.iter().sum::<usize>() + 0x20 * num_evals + 0x40 * 2;
 
-        let proof_cptr = 0x84;
+        let proof_cptr = if separate { 0x84 } else { 0x64 };
         let quotient_cptr = proof_cptr + 0x40 * num_witnesses.iter().rev().skip(1).sum::<usize>();
         let eval_cptr = proof_cptr + 0x40 * num_witnesses.iter().sum::<usize>();
         let w_cptr = eval_cptr + num_evals * 0x20;
@@ -939,6 +935,7 @@ where
         };
 
         Halo2Verifier {
+            vk: (!separate).then_some(vk),
             vk_mptr,
             vk_len,
             num_neg_lagranges,
@@ -946,6 +943,7 @@ where
             num_challenges,
             num_evals,
             num_quotients,
+            proof_cptr,
             quotient_cptr,
             proof_len,
             challenge_mptr,

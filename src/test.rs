@@ -25,6 +25,16 @@ fn function_signature() {
 }
 
 #[test]
+fn render_huge() {
+    run_render::<halo2::huge::HugeCircuit<Bn256>>()
+}
+
+#[test]
+fn render_maingate() {
+    run_render::<halo2::maingate::MainGateWithRange<Bn256>>()
+}
+
+#[test]
 fn render_separately_huge() {
     run_render_separately::<halo2::huge::HugeCircuit<Bn256>>()
 }
@@ -32,6 +42,36 @@ fn render_separately_huge() {
 #[test]
 fn render_separately_maingate() {
     run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>()
+}
+
+fn run_render<T: halo2::TestCircuit<Fr>>() {
+    let acc_encoding = AccumulatorEncoding {
+        offset: 0,
+        num_limbs: 4,
+        num_limb_bits: 68,
+    }
+    .into();
+    let (param, vk, instances, proof) =
+        halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
+
+    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+    let verifier_solidity = generator.render().unwrap();
+    let verifier_bytecode = ethereum::compile_solidity(verifier_solidity);
+    let verifier_deployment_codesize = verifier_bytecode.len();
+
+    let mut evm = ethereum::Evm::new();
+    let verifier_address = evm.create(verifier_bytecode);
+    let verifier_runtime_codesize = evm.codesize(verifier_address);
+
+    println!("Verifier deployment code size: {verifier_deployment_codesize}");
+    println!("Verifier runtime code size: {verifier_runtime_codesize}");
+
+    let (gas_cost, output) = evm.call(verifier_address, encode_calldata(None, &proof, &instances));
+    assert_eq!(
+        U256::from_be_bytes::<0x20>(output.try_into().unwrap()),
+        U256::from(1)
+    );
+    println!("Gas cost: {gas_cost}");
 }
 
 fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
@@ -82,18 +122,18 @@ fn std_rng() -> impl RngCore + Clone {
 }
 
 #[allow(dead_code)]
-fn save_generated(verifier: impl AsRef<str>, vk: Option<impl AsRef<str>>) {
+fn save_generated(verifier: &str, vk: Option<&str>) {
     const DIR_GENERATED: &str = "./target/generated";
 
     std::fs::create_dir_all(DIR_GENERATED).unwrap();
     File::create(format!("{DIR_GENERATED}/Halo2Verifier.sol"))
         .unwrap()
-        .write_all(verifier.as_ref().as_bytes())
+        .write_all(verifier.as_bytes())
         .unwrap();
     if let Some(vk) = vk {
         File::create(format!("{DIR_GENERATED}/Halo2VerifyingKey.sol"))
             .unwrap()
-            .write_all(vk.as_ref().as_bytes())
+            .write_all(vk.as_bytes())
             .unwrap();
     }
 }

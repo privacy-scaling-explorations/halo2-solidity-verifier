@@ -15,11 +15,7 @@ pub const FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS: [u8; 4] = [0xaf, 0x83, 0xa1, 0x8d
 #[cfg(test)]
 mod test;
 
-pub fn encode_calldata<F>(
-    vk_address: Option<impl Borrow<[u8; 20]>>,
-    proof: &[u8],
-    instances: &[F],
-) -> Vec<u8>
+pub fn encode_calldata<F>(vk_address: Option<[u8; 20]>, proof: &[u8], instances: &[F]) -> Vec<u8>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
@@ -29,7 +25,7 @@ where
         (FN_SIG_VERIFY_PROOF, 0x40)
     };
     let vk_address = if let Some(vk_address) = vk_address {
-        U256::try_from_be_slice(vk_address.borrow())
+        U256::try_from_be_slice(&vk_address)
             .unwrap()
             .to_be_bytes::<0x20>()
             .to_vec()

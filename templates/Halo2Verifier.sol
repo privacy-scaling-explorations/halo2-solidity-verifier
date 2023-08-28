@@ -1,9 +1,9 @@
 pragma solidity ^0.8.21;
 
 contract Halo2Verifier {
-    uint256 internal constant        PROOF_CPTR = {{ (4 + 4 * 32)|hex() }};
-    uint256 internal constant NUM_INSTANCE_CPTR = {{ (4 + 4 * 32 + proof_len)|hex() }};
-    uint256 internal constant     INSTANCE_CPTR = {{ (4 + 5 * 32 + proof_len)|hex() }};
+    uint256 internal constant        PROOF_CPTR = {{ proof_cptr|hex() }};
+    uint256 internal constant NUM_INSTANCE_CPTR = {{ (proof_cptr + proof_len)|hex() }};
+    uint256 internal constant     INSTANCE_CPTR = {{ (proof_cptr + proof_len + 32)|hex() }};
 
     uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ quotient_cptr|hex() }};
     uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ (quotient_cptr + (num_quotients - 1) * 64)|hex() }};
@@ -62,7 +62,11 @@ contract Halo2Verifier {
     uint256 internal constant       ACC_RHS_Y_MPTR = {{ (instance_eval_mptr + 17 * 32)|hex() }};
 
     function verifyProof(
+        {%- match vk %}
+        {%- when Some with (vk) %}
+        {% when None %}
         address vk,
+        {%- endmatch %}
         bytes calldata proof,
         uint256[] calldata instances
     ) public returns (bool) {
@@ -191,8 +195,22 @@ contract Halo2Verifier {
             let success := true
 
             {
+                {%- match vk %}
+                {%- when Some with (vk) %}
+                // Load vk into memory
+                {%- for (name, chunk) in vk.constants %}
+                mstore({{ (vk_mptr + 32 * loop.index0)|hex_padded(4) }}, {{ chunk|hex() }}) // {{ name }}
+                {%- endfor %}
+                {%- for chunk in vk.fixed_commitments %}
+                mstore({{ (vk_mptr + 32 * (loop.index0 + vk.constants.len()))|hex_padded(4) }}, {{ chunk|hex() }}) // fixed_commitments[{{ loop.index0 / 2 }}].{% if loop.index0 % 2 == 0 %}x{% else %}y{% endif %}
+                {%- endfor %}
+                {%- for chunk in vk.permutation_commitments %}
+                mstore({{ (vk_mptr + 32 * (loop.index0 + vk.constants.len() + vk.fixed_commitments.len()))|hex_padded(4) }}, {{ chunk|hex() }}) // permutation_commitments[{{ loop.index0 / 2 }}].{% if loop.index0 % 2 == 0 %}x{% else %}y{% endif %}
+                {%- endfor %}
+                {%- when None %}
                 // Copy vk into memory
                 extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
+                {%- endmatch %}
 
                 // Check valid length of proof
                 success := and(success, eq({{ proof_len|hex() }}, calldataload(0x64)))

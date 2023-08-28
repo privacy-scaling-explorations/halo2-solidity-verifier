@@ -20,6 +20,7 @@ impl Halo2VerifyingKey {
 #[derive(Template)]
 #[template(path = "Halo2Verifier.sol")]
 pub(crate) struct Halo2Verifier {
+    pub(crate) vk: Option<Halo2VerifyingKey>,
     pub(crate) vk_mptr: usize,
     pub(crate) vk_len: usize,
     pub(crate) num_neg_lagranges: usize,
@@ -27,6 +28,7 @@ pub(crate) struct Halo2Verifier {
     pub(crate) num_challenges: Vec<usize>,
     pub(crate) num_evals: usize,
     pub(crate) num_quotients: usize,
+    pub(crate) proof_cptr: usize,
     pub(crate) quotient_cptr: usize,
     pub(crate) proof_len: usize,
     pub(crate) challenge_mptr: usize,
