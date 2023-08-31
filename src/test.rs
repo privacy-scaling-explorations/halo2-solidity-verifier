@@ -1,5 +1,5 @@
 use crate::{
-    codegen::{AccumulatorEncoding, SolidityGenerator},
+    codegen::{AccumulatorEncoding, BatchOpenScheme::Bdfg21, SolidityGenerator},
     encode_calldata, FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
 };
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr};
@@ -54,7 +54,7 @@ fn run_render<T: halo2::TestCircuit<Fr>>() {
     let (param, vk, instances, proof) =
         halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let verifier_solidity = generator.render().unwrap();
     let verifier_bytecode = ethereum::compile_solidity(verifier_solidity);
     let verifier_deployment_codesize = verifier_bytecode.len();
@@ -84,7 +84,7 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
     let (param, vk, instances, _) =
         halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
     let verifier_bytecode = ethereum::compile_solidity(&verifier_solidity);
     let verifier_deployment_codesize = verifier_bytecode.len();
@@ -96,12 +96,16 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
     println!("Verifier deployment code size: {verifier_deployment_codesize}");
     println!("Verifier runtime code size: {verifier_runtime_codesize}");
 
+    let deployed_verifier_solidity = verifier_solidity;
+
     for k in T::min_k()..T::min_k() + 4 {
         let (param, vk, instances, proof) =
             halo2::create_testdata_shplonk::<Bn256, T>(k, acc_encoding, std_rng());
-        let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding);
+        let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
 
-        let (_, vk_solidity) = generator.render_separately().unwrap();
+        let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
+        assert_eq!(deployed_verifier_solidity, verifier_solidity);
+
         let vk_bytecode = ethereum::compile_solidity(&vk_solidity);
         let vk_address = evm.create(vk_bytecode);
 

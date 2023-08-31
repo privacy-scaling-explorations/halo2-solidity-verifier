@@ -5,8 +5,8 @@ contract Halo2Verifier {
     uint256 internal constant NUM_INSTANCE_CPTR = {{ (proof_cptr + proof_len)|hex() }};
     uint256 internal constant     INSTANCE_CPTR = {{ (proof_cptr + proof_len + 32)|hex() }};
 
-    uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ quotient_cptr|hex() }};
-    uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ (quotient_cptr + (num_quotients - 1) * 64)|hex() }};
+    uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ quotient_comm_cptr|hex() }};
+    uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ (quotient_comm_cptr + (num_quotients - 1) * 64)|hex() }};
 
     uint256 internal constant                VK_MPTR = {{ vk_mptr|hex() }};
     uint256 internal constant         VK_DIGEST_MPTR = {{ vk_mptr|hex() }};
@@ -199,13 +199,17 @@ contract Halo2Verifier {
                 {%- when Some with (vk) %}
                 // Load vk into memory
                 {%- for (name, chunk) in vk.constants %}
-                mstore({{ (vk_mptr + 32 * loop.index0)|hex_padded(4) }}, {{ chunk|hex() }}) // {{ name }}
+                mstore({{ (vk_mptr + 32 * loop.index0)|hex_padded(4) }}, {{ chunk|hex_padded(64) }}) // {{ name }}
                 {%- endfor %}
-                {%- for chunk in vk.fixed_commitments %}
-                mstore({{ (vk_mptr + 32 * (loop.index0 + vk.constants.len()))|hex_padded(4) }}, {{ chunk|hex() }}) // fixed_commitments[{{ loop.index0 / 2 }}].{% if loop.index0 % 2 == 0 %}x{% else %}y{% endif %}
+                {%- for (x, y) in vk.fixed_comms %}
+                {%- let offset = vk.constants.len() %}
+                mstore({{ (vk_mptr + 32 * (offset + 2 * loop.index0))|hex_padded(4) }}, {{ x|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].x
+                mstore({{ (vk_mptr + 32 * (offset + 2 * loop.index0 + 1))|hex_padded(4) }}, {{ y|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].y
                 {%- endfor %}
-                {%- for chunk in vk.permutation_commitments %}
-                mstore({{ (vk_mptr + 32 * (loop.index0 + vk.constants.len() + vk.fixed_commitments.len()))|hex_padded(4) }}, {{ chunk|hex() }}) // permutation_commitments[{{ loop.index0 / 2 }}].{% if loop.index0 % 2 == 0 %}x{% else %}y{% endif %}
+                {%- for (x, y) in vk.permutation_comms %}
+                {%- let offset = vk.constants.len() + 2 * vk.fixed_comms.len() %}
+                mstore({{ (vk_mptr + 32 * (offset + 2 * loop.index0))|hex_padded(4) }}, {{ x|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].x
+                mstore({{ (vk_mptr + 32 * (offset + 2 * loop.index0 + 1))|hex_padded(4) }}, {{ y|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].y
                 {%- endfor %}
                 {%- when None %}
                 // Copy vk into memory
@@ -238,15 +242,15 @@ contract Halo2Verifier {
 
                 let proof_cptr := PROOF_CPTR
                 let challenge_mptr := CHALLENGE_MPTR
-                {%- for num_witnesses in num_witnesses %}
+                {%- for num_advices in num_advices %}
                 {%- let num_challenges = num_challenges[loop.index0] %}
 
                 // Phase {{ loop.index }}
                 for
                     {%- if loop.first %}
-                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_witnesses)|hex() }}) }
+                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_advices)|hex() }}) }
                     {%- else %}
-                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_witnesses)|hex() }}) }
+                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_advices)|hex() }}) }
                     {%- endif %}
                     lt(proof_cptr, proof_cptr_end)
                     {}
@@ -413,9 +417,9 @@ contract Halo2Verifier {
                 let delta := 4131629893567559867359510883348571134090853742863529169391034518566172092834
                 let y := mload(Y_MPTR)
 
-                {%- for expression_computation in expression_computations %}
+                {%- for h_eval_numer_computation in h_eval_numer_computations %}
                 {
-                    {%- for line in expression_computation %}
+                    {%- for line in h_eval_numer_computation %}
                     {{ line }}
                     {%- endfor %}
                 }

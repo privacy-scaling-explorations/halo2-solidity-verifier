@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 mod codegen;
 mod transcript;
 
-pub use codegen::SolidityGenerator;
+pub use codegen::{BatchOpenScheme, SolidityGenerator};
 pub use transcript::{ChallengeEvm, Keccak256Transcript};
 
 pub const FN_SIG_VERIFY_PROOF: [u8; 4] = [0x1e, 0x8e, 0x1e, 0x13];

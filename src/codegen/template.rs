@@ -6,14 +6,14 @@ use std::fmt;
 #[template(path = "Halo2VerifyingKey.sol")]
 pub(crate) struct Halo2VerifyingKey {
     pub(crate) constants: Vec<(&'static str, U256)>,
-    pub(crate) fixed_commitments: Vec<U256>,
-    pub(crate) permutation_commitments: Vec<U256>,
+    pub(crate) fixed_comms: Vec<(U256, U256)>,
+    pub(crate) permutation_comms: Vec<(U256, U256)>,
 }
 
 impl Halo2VerifyingKey {
     pub(crate) fn len(&self) -> usize {
-        (self.constants.len() + self.fixed_commitments.len() + self.permutation_commitments.len())
-            * 0x20
+        (self.constants.len() * 0x20)
+            + (self.fixed_comms.len() + self.permutation_comms.len()) * 0x40
     }
 }
 
@@ -24,17 +24,17 @@ pub(crate) struct Halo2Verifier {
     pub(crate) vk_mptr: usize,
     pub(crate) vk_len: usize,
     pub(crate) num_neg_lagranges: usize,
-    pub(crate) num_witnesses: Vec<usize>,
+    pub(crate) num_advices: Vec<usize>,
     pub(crate) num_challenges: Vec<usize>,
     pub(crate) num_evals: usize,
     pub(crate) num_quotients: usize,
     pub(crate) proof_cptr: usize,
-    pub(crate) quotient_cptr: usize,
+    pub(crate) quotient_comm_cptr: usize,
     pub(crate) proof_len: usize,
     pub(crate) challenge_mptr: usize,
     pub(crate) theta_mptr: usize,
     pub(crate) instance_eval_mptr: usize,
-    pub(crate) expression_computations: Vec<Vec<String>>,
+    pub(crate) h_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
 }
 
@@ -61,9 +61,7 @@ mod filters {
 
     pub fn hex(value: impl LowerHex) -> ::askama::Result<String> {
         let value = format!("{value:x}");
-        Ok(if value == "0" {
-            format!("0x{}", "0".repeat(64))
-        } else if value.len() % 2 == 1 {
+        Ok(if value.len() % 2 == 1 {
             format!("0x0{value}")
         } else {
             format!("0x{value}")
@@ -71,6 +69,11 @@ mod filters {
     }
 
     pub fn hex_padded(value: impl LowerHex, pad: usize) -> ::askama::Result<String> {
-        Ok(format!("0x{value:0pad$x}", pad = pad))
+        let string = format!("0x{value:0pad$x}", pad = pad);
+        if string == "0x0" {
+            Ok(format!("0x{}", "0".repeat(pad)))
+        } else {
+            Ok(string)
+        }
     }
 }
