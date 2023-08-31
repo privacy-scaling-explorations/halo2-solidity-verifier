@@ -129,11 +129,11 @@ impl ConstraintSystemMeta {
         num_challenges
     }
 
-    pub fn num_permutations(&self) -> usize {
+    pub(crate) fn num_permutations(&self) -> usize {
         self.permutation_columns.len()
     }
 
-    pub fn num_lookups(&self) -> usize {
+    pub(crate) fn num_lookups(&self) -> usize {
         self.num_lookup_zs
     }
 
@@ -164,11 +164,12 @@ impl ConstraintSystemMeta {
 
 #[derive(Debug)]
 pub(crate) struct Data {
-    pub(crate) challenge_mptr: usize,
-    pub(crate) theta_mptr: usize,
-    pub(crate) instance_eval_mptr: usize,
-    pub(crate) quotient_comm_cptr: usize,
-    pub(crate) w_cptr: usize,
+    pub(crate) challenge_mptr: Ptr,
+    pub(crate) theta_mptr: Ptr,
+    pub(crate) instance_eval_mptr: Ptr,
+
+    pub(crate) quotient_comm_cptr: Ptr,
+    pub(crate) w_cptr: Ptr,
 
     pub(crate) fixed_comms: Vec<EcPoint>,
     pub(crate) permutation_comms: HashMap<Column<Any>, EcPoint>,
@@ -177,7 +178,6 @@ pub(crate) struct Data {
     pub(crate) permutation_z_comms: Vec<EcPoint>,
     pub(crate) lookup_z_comms: Vec<EcPoint>,
     pub(crate) random_comm: EcPoint,
-    pub(crate) quotient_comm: EcPoint,
 
     pub(crate) challenges: Vec<U256Expr>,
 
@@ -188,7 +188,9 @@ pub(crate) struct Data {
     pub(crate) permutation_evals: HashMap<Column<Any>, U256Expr>,
     pub(crate) permutation_z_evals: Vec<(U256Expr, U256Expr, U256Expr)>,
     pub(crate) lookup_evals: Vec<(U256Expr, U256Expr, U256Expr, U256Expr, U256Expr)>,
-    pub(crate) quotient_eval: U256Expr,
+
+    pub(crate) computed_quotient_comm: EcPoint,
+    pub(crate) computed_quotient_eval: U256Expr,
 }
 
 impl Data {
@@ -196,79 +198,75 @@ impl Data {
         meta: &ConstraintSystemMeta,
         scheme: BatchOpenScheme,
         vk: &Halo2VerifyingKey,
-        vk_mptr: usize,
-        proof_cptr: usize,
+        vk_mptr: Ptr,
+        proof_cptr: Ptr,
     ) -> Self {
-        let fixed_comm_mptr = vk_mptr + vk.constants.len() * 0x20;
-        let permutation_comm_mptr = fixed_comm_mptr + vk.fixed_comms.len() * 0x40;
-        let challenge_mptr = permutation_comm_mptr + vk.permutation_comms.len() * 0x40;
-        let theta_mptr = challenge_mptr + 0x20 * meta.num_user_challenges.iter().sum::<usize>();
-        let instance_eval_mptr = theta_mptr + (5 + meta.num_batch_open_challenges(scheme)) * 0x20;
+        let fixed_comm_mptr = vk_mptr + vk.constants.len();
+        let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
+        let challenge_mptr = permutation_comm_mptr + 2 * vk.permutation_comms.len();
+        let theta_mptr = challenge_mptr + meta.num_user_challenges.iter().sum::<usize>();
+        let instance_eval_mptr = theta_mptr + 5 + meta.num_batch_open_challenges(scheme);
 
-        let advice_comm_cptr = proof_cptr;
-        let lookup_permuted_comm_cptr = advice_comm_cptr + meta.advice_index.len() * 0x40;
-        let permutation_z_comm_cptr = lookup_permuted_comm_cptr + meta.num_lookup_permuteds * 0x40;
-        let lookup_z_comm_cptr = permutation_z_comm_cptr + meta.num_permutation_zs * 0x40;
-        let random_comm_cptr = lookup_z_comm_cptr + meta.num_lookup_zs * 0x40;
-        let quotient_comm_cptr = random_comm_cptr + 0x40;
+        let advice_comm_start = EcPoint::cptr(proof_cptr);
+        let lookup_permuted_comm_start = advice_comm_start + meta.advice_index.len();
+        let permutation_z_comm_start = lookup_permuted_comm_start + meta.num_lookup_permuteds;
+        let lookup_z_comm_start = permutation_z_comm_start + meta.num_permutation_zs;
+        let random_comm_start = lookup_z_comm_start + meta.num_lookup_zs;
+        let quotient_comm_start = random_comm_start + 1;
 
-        let eval_cptr = quotient_comm_cptr + meta.num_quotients * 0x40;
+        let eval_cptr = (quotient_comm_start + meta.num_quotients).x().ptr();
         let advice_eval_cptr = eval_cptr;
-        let fixed_eval_cptr = advice_eval_cptr + meta.advice_queries.len() * 0x20;
-        let random_eval_cptr = fixed_eval_cptr + meta.fixed_queries.len() * 0x20;
-        let permutation_eval_cptr = random_eval_cptr + 0x20;
-        let permutation_z_eval_cptr = permutation_eval_cptr + meta.num_permutations() * 0x20;
-        let lookup_eval_cptr = permutation_z_eval_cptr + (3 * meta.num_permutation_zs - 1) * 0x20;
-        let w_cptr = lookup_eval_cptr + 5 * meta.num_lookups() * 0x20;
+        let fixed_eval_cptr = advice_eval_cptr + meta.advice_queries.len();
+        let random_eval_cptr = fixed_eval_cptr + meta.fixed_queries.len();
+        let permutation_eval_cptr = random_eval_cptr + 1;
+        let permutation_z_eval_cptr = permutation_eval_cptr + meta.num_permutations();
+        let lookup_eval_cptr = permutation_z_eval_cptr + 3 * meta.num_permutation_zs - 1;
+        let w_cptr = lookup_eval_cptr + 5 * meta.num_lookups();
 
-        let fixed_comms = (fixed_comm_mptr..)
-            .step_by(0x40)
+        let fixed_comms = EcPoint::mptr(fixed_comm_mptr)
+            .range_from()
             .take(meta.num_fixeds)
-            .map(EcPoint::mptr)
             .collect();
         let permutation_comms = izip!(
             meta.permutation_columns.iter().cloned(),
-            (permutation_comm_mptr..).step_by(0x40).map(EcPoint::mptr)
+            EcPoint::mptr(permutation_comm_mptr).range_from()
         )
         .collect();
         let advice_comms = meta
             .advice_index
             .iter()
-            .map(|idx| EcPoint::cptr(advice_comm_cptr + idx * 0x40))
+            .map(|idx| advice_comm_start + *idx)
             .collect();
-        let lookup_permuted_comms = (lookup_permuted_comm_cptr..)
-            .step_by(0x40)
+        let lookup_permuted_comms = lookup_permuted_comm_start
+            .range_from()
             .take(meta.num_lookup_permuteds)
-            .map(EcPoint::cptr)
             .tuples()
             .collect();
-        let permutation_z_comms = (permutation_z_comm_cptr..)
-            .step_by(0x40)
+        let permutation_z_comms = permutation_z_comm_start
+            .range_from()
             .take(meta.num_permutation_zs)
-            .map(EcPoint::cptr)
             .collect();
-        let lookup_z_comms = (lookup_z_comm_cptr..)
-            .step_by(0x40)
+        let lookup_z_comms = lookup_z_comm_start
+            .range_from()
             .take(meta.num_lookup_zs)
-            .map(EcPoint::cptr)
             .collect();
-        let random_comm = EcPoint::cptr(random_comm_cptr);
-        let quotient_comm = EcPoint::mptr_xy("H_X_MPTR", "H_Y_MPTR");
+        let random_comm = random_comm_start;
+        let computed_quotient_comm = EcPoint::mptr_xy("QUOTIENT_X_MPTR", "QUOTIENT_Y_MPTR");
 
         let challenges = meta
             .challenge_index
             .iter()
-            .map(|idx| U256Expr::mptr(challenge_mptr + idx * 0x20))
+            .map(|idx| U256Expr::mptr(challenge_mptr + *idx))
             .collect_vec();
         let instance_eval = U256Expr::mptr("INSTANCE_EVAL_MPTR");
         let advice_evals = izip!(
             meta.advice_queries.iter().cloned(),
-            (advice_eval_cptr..).step_by(0x20).map(U256Expr::cptr)
+            advice_eval_cptr.range_from().map(U256Expr::cptr)
         )
         .collect();
         let fixed_evals = izip!(
             meta.fixed_queries.iter().cloned(),
-            (fixed_eval_cptr..).step_by(0x20).map(U256Expr::cptr)
+            fixed_eval_cptr.range_from().map(U256Expr::cptr)
         )
         .collect();
         let random_eval = U256Expr::cptr(random_eval_cptr);
@@ -276,27 +274,27 @@ impl Data {
             .permutation_columns
             .iter()
             .cloned()
-            .zip((permutation_eval_cptr..).step_by(0x20).map(U256Expr::cptr))
+            .zip(permutation_eval_cptr.range_from().map(U256Expr::cptr))
             .collect();
-        let permutation_z_evals = (permutation_z_eval_cptr..)
-            .step_by(0x20)
+        let permutation_z_evals = permutation_z_eval_cptr
+            .range_from()
             .map(U256Expr::cptr)
             .take(3 * meta.num_permutation_zs)
             .tuples()
             .collect_vec();
-        let lookup_evals = (lookup_eval_cptr..)
-            .step_by(0x20)
+        let lookup_evals = lookup_eval_cptr
+            .range_from()
             .map(U256Expr::cptr)
             .take(5 * meta.num_lookup_zs)
             .tuples()
             .collect_vec();
-        let quotient_eval = U256Expr::mptr("H_EVAL_MPTR");
+        let computed_quotient_eval = U256Expr::mptr("QUOTIENT_EVAL_MPTR");
 
         Self {
             challenge_mptr,
             theta_mptr,
             instance_eval_mptr,
-            quotient_comm_cptr,
+            quotient_comm_cptr: quotient_comm_start.x().ptr(),
             w_cptr,
 
             fixed_comms,
@@ -306,7 +304,7 @@ impl Data {
             permutation_z_comms,
             lookup_z_comms,
             random_comm,
-            quotient_comm,
+            computed_quotient_comm,
 
             challenges,
 
@@ -317,13 +315,13 @@ impl Data {
             permutation_z_evals,
             lookup_evals,
             random_eval,
-            quotient_eval,
+            computed_quotient_eval,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ptr {
+pub(crate) enum Ptr {
     Literal(usize),
     Identifier(&'static str),
 }
@@ -351,7 +349,12 @@ impl Display for Ptr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Ptr::Literal(literal) => {
-                write!(f, "0x{literal:x}")
+                let hex = format!("{literal:x}");
+                if hex.len() % 2 == 1 {
+                    write!(f, "0x0{hex}")
+                } else {
+                    write!(f, "0x{hex}")
+                }
             }
             Ptr::Identifier(ident) => {
                 write!(f, "{ident}")
@@ -400,21 +403,21 @@ macro_rules! ptr {
 pub(crate) use ptr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum U256Expr {
+pub(crate) enum U256Expr {
     Memory(Ptr),
     Calldata(Ptr),
 }
 
 impl U256Expr {
-    pub fn mptr(ptr: impl Into<Ptr>) -> Self {
+    pub(crate) fn mptr(ptr: impl Into<Ptr>) -> Self {
         U256Expr::Memory(ptr.into())
     }
 
-    pub fn cptr(ptr: impl Into<Ptr>) -> Self {
+    pub(crate) fn cptr(ptr: impl Into<Ptr>) -> Self {
         U256Expr::Calldata(ptr.into())
     }
 
-    fn ptr(&self) -> Ptr {
+    pub(crate) fn ptr(&self) -> Ptr {
         match self {
             U256Expr::Memory(mptr) => *mptr,
             U256Expr::Calldata(cptr) => *cptr,
@@ -436,7 +439,7 @@ impl Display for U256Expr {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EcPoint {
+pub(crate) struct EcPoint {
     x: U256Expr,
     y: U256Expr,
 }
@@ -449,15 +452,21 @@ impl EcPoint {
         }
     }
 
-    pub(crate) fn mptr(mptr: usize) -> Self {
-        Self::mptr_xy(mptr, mptr + 0x20)
+    pub(crate) fn mptr(mptr: impl Into<Ptr>) -> Self {
+        let mptr = mptr.into();
+        Self::mptr_xy(mptr, mptr + 1)
     }
 
-    pub(crate) fn cptr(cptr: usize) -> Self {
+    pub(crate) fn cptr(cptr: impl Into<Ptr>) -> Self {
+        let cptr = cptr.into();
         Self {
             x: U256Expr::cptr(cptr),
-            y: U256Expr::cptr(cptr + 0x20),
+            y: U256Expr::cptr(cptr + 1),
         }
+    }
+
+    pub(crate) fn range_from(&self) -> impl Iterator<Item = EcPoint> + '_ {
+        (0..).map(|idx| *self + idx)
     }
 
     pub(crate) fn x(&self) -> &U256Expr {

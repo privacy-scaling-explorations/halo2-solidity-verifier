@@ -1,4 +1,7 @@
-use crate::codegen::pcs::BatchOpenScheme::{self, Bdfg21, Gwc19};
+use crate::codegen::{
+    pcs::BatchOpenScheme::{self, Bdfg21, Gwc19},
+    util::Ptr,
+};
 use askama::{Error, Template};
 use ruint::aliases::U256;
 use std::fmt;
@@ -23,20 +26,20 @@ impl Halo2VerifyingKey {
 pub(crate) struct Halo2Verifier {
     pub(crate) scheme: BatchOpenScheme,
     pub(crate) vk: Option<Halo2VerifyingKey>,
-    pub(crate) vk_mptr: usize,
     pub(crate) vk_len: usize,
+    pub(crate) proof_len: usize,
+    pub(crate) vk_mptr: Ptr,
+    pub(crate) challenge_mptr: Ptr,
+    pub(crate) theta_mptr: Ptr,
+    pub(crate) instance_eval_mptr: Ptr,
+    pub(crate) proof_cptr: Ptr,
+    pub(crate) quotient_comm_cptr: Ptr,
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_advices: Vec<usize>,
     pub(crate) num_challenges: Vec<usize>,
     pub(crate) num_evals: usize,
     pub(crate) num_quotients: usize,
-    pub(crate) proof_cptr: usize,
-    pub(crate) quotient_comm_cptr: usize,
-    pub(crate) proof_len: usize,
-    pub(crate) challenge_mptr: usize,
-    pub(crate) theta_mptr: usize,
-    pub(crate) instance_eval_mptr: usize,
-    pub(crate) h_eval_numer_computations: Vec<Vec<String>>,
+    pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
 }
 

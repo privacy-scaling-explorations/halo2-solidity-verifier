@@ -11,7 +11,7 @@ pub enum BatchOpenScheme {
 }
 
 #[derive(Debug)]
-pub struct Query {
+pub(crate) struct Query {
     comm: EcPoint,
     rot: i32,
     eval: U256Expr,
@@ -62,7 +62,7 @@ pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
             Query::new(comm, 0, eval)
         }),
         [
-            Query::new(data.quotient_comm, 0, data.quotient_eval),
+            Query::new(data.computed_quotient_comm, 0, data.computed_quotient_eval),
             Query::new(data.random_comm, 0, data.random_eval),
         ]
     ]
@@ -70,7 +70,7 @@ pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
 }
 
 #[derive(Debug)]
-pub struct RotationSet {
+pub(crate) struct RotationSet {
     rots: BTreeSet<i32>,
     diffs: BTreeSet<i32>,
     comms: Vec<EcPoint>,
@@ -78,24 +78,24 @@ pub struct RotationSet {
 }
 
 impl RotationSet {
-    pub fn rots(&self) -> &BTreeSet<i32> {
+    pub(crate) fn rots(&self) -> &BTreeSet<i32> {
         &self.rots
     }
 
-    pub fn diffs(&self) -> &BTreeSet<i32> {
+    pub(crate) fn diffs(&self) -> &BTreeSet<i32> {
         &self.diffs
     }
 
-    pub fn comms(&self) -> &[EcPoint] {
+    pub(crate) fn comms(&self) -> &[EcPoint] {
         &self.comms
     }
 
-    pub fn evals(&self) -> &[Vec<String>] {
+    pub(crate) fn evals(&self) -> &[Vec<String>] {
         &self.evals
     }
 }
 
-pub fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSet>) {
+pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSet>) {
     let mut superset = BTreeSet::new();
     let comm_queries = queries.iter().fold(
         Vec::<(EcPoint, BTreeMap<i32, String>)>::new(),

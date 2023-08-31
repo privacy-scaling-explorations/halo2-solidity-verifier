@@ -6,7 +6,7 @@ use crate::{
             BatchOpenScheme::{Bdfg21, Gwc19},
         },
         template::{Halo2Verifier, Halo2VerifyingKey},
-        util::{ConstraintSystemMeta, Data},
+        util::{ConstraintSystemMeta, Data, Ptr},
     },
     fe_to_u256, g1_to_u256, g2_to_u256,
 };
@@ -199,15 +199,15 @@ where
     }
 
     fn generate_verifier(&self, separate: bool) -> Halo2Verifier {
-        let proof_cptr = if separate { 0x84 } else { 0x64 };
+        let proof_cptr = Ptr::from(if separate { 0x84 } else { 0x64 });
 
         let vk = self.generate_vk();
         let vk_len = vk.len();
-        let vk_mptr = self.estimate_working_memory_size(&vk, proof_cptr);
+        let vk_mptr = Ptr::from(self.estimate_working_memory_size(&vk, proof_cptr));
         let data = Data::new(&self.meta, self.scheme, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
-        let h_eval_numer_computations = chain![
+        let quotient_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
             evaluator.lookup_computations()
@@ -215,9 +215,11 @@ where
         .enumerate()
         .map(|(idx, (mut lines, var))| {
             let line = if idx == 0 {
-                format!("h_eval_numer := {var}")
+                format!("quotient_eval_numer := {var}")
             } else {
-                format!("h_eval_numer := addmod(mulmod(h_eval_numer, y, r), {var}, r)")
+                format!(
+                    "quotient_eval_numer := addmod(mulmod(quotient_eval_numer, y, r), {var}, r)"
+                )
             };
             lines.push(line);
             lines
@@ -245,15 +247,16 @@ where
             challenge_mptr: data.challenge_mptr,
             theta_mptr: data.theta_mptr,
             instance_eval_mptr: data.instance_eval_mptr,
-            h_eval_numer_computations,
+            quotient_eval_numer_computations,
             pcs_computations,
         }
     }
 
-    fn estimate_working_memory_size(&self, vk: &Halo2VerifyingKey, proof_cptr: usize) -> usize {
+    fn estimate_working_memory_size(&self, vk: &Halo2VerifyingKey, proof_cptr: Ptr) -> usize {
         match self.scheme {
             Bdfg21 => {
-                let mock = Data::new(&self.meta, self.scheme, vk, 0xa0000, proof_cptr);
+                let mock_vk_mptr = Ptr::from(0x100000);
+                let mock = Data::new(&self.meta, self.scheme, vk, mock_vk_mptr, proof_cptr);
                 let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
                 let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
                 itertools::max(chain![
@@ -263,10 +266,7 @@ where
                         .map(|n| (n * 0x40) + 0x20),
                     [
                         (self.meta.num_evals + 1) * 0x20,
-                        (1 + num_coeffs) * 0x20 * 2
-                            + 6 * 0x20
-                            + superset.len() * 2 * 0x20
-                            + sets.len() * 2 * 0x20
+                        (2 * (1 + num_coeffs) + 6 + 2 * superset.len() + 2 * sets.len()) * 0x20
                     ],
                 ])
                 .unwrap()
