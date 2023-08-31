@@ -251,25 +251,27 @@ where
     }
 
     fn estimate_working_memory_size(&self, vk: &Halo2VerifyingKey, proof_cptr: usize) -> usize {
-        let mock = Data::new(&self.meta, self.scheme, vk, 0xa0000, proof_cptr);
-        let (superset, rotation_sets) = rotation_sets(&queries(&self.meta, &mock));
-        let num_weights = rotation_sets
-            .iter()
-            .map(|set| set.rotations().len())
-            .sum::<usize>();
-        itertools::max(chain![
-            self.meta
-                .num_advices()
-                .into_iter()
-                .map(|n| (n * 0x40) + 0x20),
-            [
-                (self.meta.num_evals + 1) * 0x20,
-                num_weights * 0x20 * 2
-                    + 6 * 0x20
-                    + superset.len() * 2 * 0x20
-                    + rotation_sets.len() * 2 * 0x20
-            ],
-        ])
-        .unwrap()
+        match self.scheme {
+            Bdfg21 => {
+                let mock = Data::new(&self.meta, self.scheme, vk, 0xa0000, proof_cptr);
+                let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
+                let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
+                itertools::max(chain![
+                    self.meta
+                        .num_advices()
+                        .into_iter()
+                        .map(|n| (n * 0x40) + 0x20),
+                    [
+                        (self.meta.num_evals + 1) * 0x20,
+                        (1 + num_coeffs) * 0x20 * 2
+                            + 6 * 0x20
+                            + superset.len() * 2 * 0x20
+                            + sets.len() * 2 * 0x20
+                    ],
+                ])
+                .unwrap()
+            }
+            Gwc19 => unimplemented!(),
+        }
     }
 }
