@@ -260,10 +260,10 @@ where
                     Some(advice_eval_var(query)),
                 )
             },
-            &|_| self.init_var(&self.data.instance_eval, Some("i_eval".to_string())),
+            &|_| self.init_var(self.data.instance_eval, Some("i_eval".to_string())),
             &|challenge| {
                 self.init_var(
-                    &self.data.challenges[challenge.index()],
+                    self.data.challenges[challenge.index()],
                     Some(format!("c_{}", challenge.index())),
                 )
             },

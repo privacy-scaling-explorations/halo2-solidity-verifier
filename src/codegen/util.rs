@@ -10,6 +10,7 @@ use itertools::{chain, izip, Itertools};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
+    ops::{Add, Sub},
 };
 
 #[derive(Debug)]
@@ -321,10 +322,29 @@ impl Data {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ptr {
     Literal(usize),
-    Identifier(String),
+    Identifier(&'static str),
+}
+
+impl Ptr {
+    pub(crate) fn range_from(&self) -> impl Iterator<Item = Ptr> + '_ {
+        (0..).map(|idx| *self + idx)
+    }
+
+    fn as_usize(&self) -> usize {
+        match self {
+            Ptr::Literal(literal) => *literal,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Default for Ptr {
+    fn default() -> Self {
+        Self::Literal(0)
+    }
 }
 
 impl Display for Ptr {
@@ -342,12 +362,6 @@ impl Display for Ptr {
 
 impl From<&'static str> for Ptr {
     fn from(ident: &'static str) -> Self {
-        Ptr::Identifier(ident.to_string())
-    }
-}
-
-impl From<String> for Ptr {
-    fn from(ident: String) -> Self {
         Ptr::Identifier(ident)
     }
 }
@@ -358,7 +372,34 @@ impl From<usize> for Ptr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Add<usize> for Ptr {
+    type Output = Ptr;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        (self.as_usize() + rhs * 0x20).into()
+    }
+}
+
+impl Sub<usize> for Ptr {
+    type Output = Ptr;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        (self.as_usize() - rhs * 0x20).into()
+    }
+}
+
+macro_rules! ptr {
+    () => {
+        Ptr::default()
+    };
+    ($value:expr) => {
+        Ptr::default() + $value
+    };
+}
+
+pub(crate) use ptr;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum U256Expr {
     Memory(Ptr),
     Calldata(Ptr),
@@ -371,6 +412,13 @@ impl U256Expr {
 
     pub fn cptr(ptr: impl Into<Ptr>) -> Self {
         U256Expr::Calldata(ptr.into())
+    }
+
+    fn ptr(&self) -> Ptr {
+        match self {
+            U256Expr::Memory(mptr) => *mptr,
+            U256Expr::Calldata(cptr) => *cptr,
+        }
     }
 }
 
@@ -387,7 +435,7 @@ impl Display for U256Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcPoint {
     x: U256Expr,
     y: U256Expr,
@@ -418,6 +466,26 @@ impl EcPoint {
 
     pub(crate) fn y(&self) -> &U256Expr {
         &self.y
+    }
+}
+
+impl Add<usize> for EcPoint {
+    type Output = EcPoint;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        let x = self.x().ptr() + 2 * rhs;
+        let y = self.y().ptr() + 2 * rhs;
+        assert_eq!(x + 1, y);
+        match self.x {
+            U256Expr::Memory(_) => Self {
+                x: U256Expr::Memory(x),
+                y: U256Expr::Memory(y),
+            },
+            U256Expr::Calldata(_) => Self {
+                x: U256Expr::Calldata(x),
+                y: U256Expr::Calldata(y),
+            },
+        }
     }
 }
 

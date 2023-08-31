@@ -1,6 +1,6 @@
 #![allow(clippy::useless_format)]
 
-use crate::codegen::util::{ConstraintSystemMeta, Data, EcPoint, U256Expr};
+use crate::codegen::util::{ptr, ConstraintSystemMeta, Data, EcPoint, Ptr, U256Expr};
 use itertools::{chain, izip, Itertools};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,47 +26,44 @@ impl Query {
 pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
     chain![
         meta.advice_queries.iter().map(|query| {
-            let comm = data.advice_comms[query.0].clone();
-            let eval = data.advice_evals[query].clone();
+            let comm = data.advice_comms[query.0];
+            let eval = data.advice_evals[query];
             Query::new(comm, query.1, eval)
         }),
-        izip!(&data.permutation_z_comms, &data.permutation_z_evals).flat_map(|(comm, evals)| {
-            [
-                Query::new(comm.clone(), 0, evals.0.clone()),
-                Query::new(comm.clone(), 1, evals.1.clone()),
-            ]
+        izip!(&data.permutation_z_comms, &data.permutation_z_evals).flat_map(|(&comm, evals)| {
+            [Query::new(comm, 0, evals.0), Query::new(comm, 1, evals.1)]
         }),
         izip!(&data.permutation_z_comms, &data.permutation_z_evals)
             .rev()
             .skip(1)
-            .map(|(comm, evals)| Query::new(comm.clone(), meta.rotation_last, evals.2.clone())),
+            .map(|(&comm, evals)| Query::new(comm, meta.rotation_last, evals.2)),
         izip!(
             &data.lookup_permuted_comms,
             &data.lookup_z_comms,
             &data.lookup_evals
         )
-        .flat_map(|(permuted_comms, z_comm, evals)| {
+        .flat_map(|(permuted_comms, &z_comm, evals)| {
             [
-                Query::new(z_comm.clone(), 0, evals.0.clone()),
-                Query::new(permuted_comms.0.clone(), 0, evals.2.clone()),
-                Query::new(permuted_comms.1.clone(), 0, evals.4.clone()),
-                Query::new(permuted_comms.0.clone(), -1, evals.3.clone()),
-                Query::new(z_comm.clone(), 1, evals.1.clone()),
+                Query::new(z_comm, 0, evals.0),
+                Query::new(permuted_comms.0, 0, evals.2),
+                Query::new(permuted_comms.1, 0, evals.4),
+                Query::new(permuted_comms.0, -1, evals.3),
+                Query::new(z_comm, 1, evals.1),
             ]
         }),
         meta.fixed_queries.iter().map(|query| {
-            let comm = data.fixed_comms[query.0].clone();
-            let eval = data.fixed_evals[query].clone();
+            let comm = data.fixed_comms[query.0];
+            let eval = data.fixed_evals[query];
             Query::new(comm, query.1, eval)
         }),
         meta.permutation_columns.iter().map(|column| {
-            let comm = data.permutation_comms[column].clone();
-            let eval = data.permutation_evals[column].clone();
+            let comm = data.permutation_comms[column];
+            let eval = data.permutation_evals[column];
             Query::new(comm, 0, eval)
         }),
         [
-            Query::new(data.quotient_comm.clone(), 0, data.quotient_eval.clone()),
-            Query::new(data.random_comm.clone(), 0, data.random_eval.clone()),
+            Query::new(data.quotient_comm, 0, data.quotient_eval),
+            Query::new(data.random_comm, 0, data.random_eval),
         ]
     ]
     .collect()
@@ -113,7 +110,7 @@ pub fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSet>) {
                 queries.insert(query.rot, query.eval.to_string());
             } else {
                 comm_queries.push((
-                    query.comm.clone(),
+                    query.comm,
                     BTreeMap::from_iter([(query.rot, query.eval.to_string())]),
                 ));
             }
@@ -159,39 +156,42 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
     let (superset, sets) = rotation_sets(&queries);
 
     let w = EcPoint::cptr(data.w_cptr);
-    let w_prime = EcPoint::cptr(data.w_cptr + 0x40);
+    let w_prime = w + 1;
 
-    let diff_0_mptr = 0x00;
-    let coeff_mptr = sets
+    let diff_0_mptr = ptr!();
+    let coeff_mptrs = sets
         .iter()
-        .scan(diff_0_mptr + 0x20, |state, set| {
-            let mptr = *state;
-            *state += set.rots().len() * 0x20;
-            Some(mptr)
+        .scan(diff_0_mptr + 1, |state, set| {
+            let ptrs = state.range_from().take(set.rots().len()).collect_vec();
+            *state = *state + set.rots().len();
+            Some(ptrs)
         })
         .collect_vec();
 
     let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
-    let batch_invert_1_end = (1 + num_coeffs) * 0x20;
-    let batch_invert_2_end = sets.len() * 0x20;
-    let free_mptr = batch_invert_1_end * 2 + 6 * 0x20;
+    let first_batch_invert_end = ptr!(1 + num_coeffs);
+    let second_batch_invert_end = ptr!(sets.len());
+    let free_mptr = ptr!(2 * (1 + num_coeffs) + 6);
 
     let min_rot = *superset.first().unwrap();
     let max_rot = *superset.last().unwrap();
-    let point_idx = superset.iter().zip(0..).collect::<BTreeMap<_, _>>();
-    let point_mptr = superset
+    let point_vars = superset
         .iter()
-        .zip((free_mptr..).step_by(0x20))
+        .zip((0..).map(|idx| format!("point_{idx}")))
         .collect::<BTreeMap<_, _>>();
-    let mu_minus_point_mptr = superset
+    let point_mptrs = superset
         .iter()
-        .zip((free_mptr + superset.len() * 0x20..).step_by(0x20))
+        .zip(free_mptr.range_from())
+        .collect::<BTreeMap<_, _>>();
+    let mu_minus_point_mptrs = superset
+        .iter()
+        .zip((free_mptr + superset.len()).range_from())
         .collect::<BTreeMap<_, _>>();
 
-    let vanishing_mptr = free_mptr + superset.len() * 2 * 0x20;
-    let diff_mptr = vanishing_mptr + 0x20;
-    let r_eval_mptr = diff_mptr + sets.len() * 0x20;
-    let sum_mptr = r_eval_mptr + sets.len() * 0x20;
+    let vanishing_mptr = free_mptr + superset.len() * 2;
+    let diff_mptr = vanishing_mptr + 1;
+    let r_eval_mptr = diff_mptr + sets.len();
+    let sum_mptr = r_eval_mptr + sets.len();
 
     let point_computations = chain![
         [
@@ -203,22 +203,22 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         .map(str::to_string),
         (1..=max_rot).flat_map(|rot| {
             chain![
-                point_mptr
+                point_mptrs
                     .get(&rot)
-                    .map(|mptr| format!("mstore(0x{mptr:x}, x_pow_of_omega)",)),
+                    .map(|mptr| format!("mstore({mptr}, x_pow_of_omega)")),
                 (rot != max_rot)
                     .then(|| { "x_pow_of_omega := mulmod(x_pow_of_omega, omega, r)".to_string() })
             ]
         }),
         [
-            format!("mstore(0x{:x}, x)", point_mptr[&0]),
-            "x_pow_of_omega := mulmod(x, omega_inv, r)".to_string()
+            format!("mstore({}, x)", point_mptrs[&0]),
+            format!("x_pow_of_omega := mulmod(x, omega_inv, r)")
         ],
         (min_rot..0).rev().flat_map(|rot| {
             chain![
-                point_mptr
+                point_mptrs
                     .get(&rot)
-                    .map(|mptr| format!("mstore(0x{mptr:x}, x_pow_of_omega)",)),
+                    .map(|mptr| format!("mstore({mptr}, x_pow_of_omega)")),
                 (rot != min_rot).then(|| {
                     "x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, r)".to_string()
                 })
@@ -231,14 +231,14 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         ["let mu := mload(MU_MPTR)", "for", "    {",].map(str::to_string),
         [
             format!(
-                "        let mptr := 0x{:x}",
-                free_mptr + superset.len() * 0x20
+                "        let mptr := {}",
+                mu_minus_point_mptrs.first_key_value().unwrap().1
             ),
             format!(
-                "        let mptr_end := 0x{:x}",
-                free_mptr + superset.len() * 2 * 0x20
+                "        let mptr_end := {}",
+                *mu_minus_point_mptrs.first_key_value().unwrap().1 + mu_minus_point_mptrs.len()
             ),
-            format!("        let point_mptr := 0x{free_mptr:x}"),
+            format!("        let point_mptr := {free_mptr}"),
         ],
         [
             "    }",
@@ -254,91 +254,77 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         ["let s".to_string()],
         chain![
             [format!(
-                "s := mload(0x{:x})",
-                mu_minus_point_mptr[sets[0].rots().first().unwrap()]
+                "s := mload({})",
+                mu_minus_point_mptrs[sets[0].rots().first().unwrap()]
             )],
             sets[0].rots().iter().skip(1).map(|rot| {
-                let item = format!("mload(0x{:x})", mu_minus_point_mptr[rot]);
+                let item = format!("mload({})", mu_minus_point_mptrs[rot]);
                 format!("s := mulmod(s, {item}, r)")
             }),
-            [format!("mstore(0x{:x}, s)", vanishing_mptr)],
+            [format!("mstore({}, s)", vanishing_mptr)],
         ],
         ["let diff".to_string()],
         sets.iter()
-            .zip((diff_mptr..).step_by(0x20))
+            .zip(diff_mptr.range_from())
             .flat_map(|(set, mptr)| {
                 chain![
                     [format!(
-                        "diff := mload(0x{:x})",
-                        mu_minus_point_mptr[set.diffs().first().unwrap()]
+                        "diff := mload({})",
+                        mu_minus_point_mptrs[set.diffs().first().unwrap()]
                     )],
                     set.diffs().iter().skip(1).map(|rot| {
-                        let item = format!("mload(0x{:x})", mu_minus_point_mptr[rot]);
+                        let item = format!("mload({})", mu_minus_point_mptrs[rot]);
                         format!("diff := mulmod(diff, {item}, r)")
                     }),
-                    [format!("mstore(0x{:x}, diff)", mptr)],
-                    (mptr == diff_mptr).then(|| format!("mstore(0x{diff_0_mptr:x}, diff)")),
+                    [format!("mstore({}, diff)", mptr)],
+                    (mptr == diff_mptr).then(|| format!("mstore({diff_0_mptr}, diff)")),
                 ]
             })
     ]
     .collect_vec();
 
-    let coeff_computations = sets
-        .iter()
-        .enumerate()
-        .map(|(idx, set)| {
-            let coeff_rotations = set
+    let coeff_computations = izip!(&sets, &coeff_mptrs)
+        .map(|(set, coeff_mptrs)| {
+            let coeff_points = set
                 .rots()
                 .iter()
+                .map(|rot| &point_vars[rot])
                 .enumerate()
-                .map(|(i, rotation_i)| {
+                .map(|(i, rot_i)| {
                     set.rots()
                         .iter()
+                        .map(|rot| &point_vars[rot])
                         .enumerate()
-                        .filter_map(move |(j, rotation_j)| {
-                            (i != j).then_some((rotation_i, rotation_j))
-                        })
+                        .filter_map(|(j, rot_j)| (i != j).then_some((rot_i, rot_j)))
                         .collect_vec()
                 })
                 .collect_vec();
             chain![
                 set.rots().iter().map(|rot| {
-                    format!(
-                        "let point_{} := mload(0x{:x})",
-                        point_idx[rot], point_mptr[rot]
-                    )
+                    format!("let {} := mload({})", &point_vars[rot], point_mptrs[rot])
                 }),
                 ["let coeff".to_string()],
-                izip!(
-                    set.rots(),
-                    &coeff_rotations,
-                    (coeff_mptr[idx]..).step_by(0x20)
-                )
-                .flat_map(|(rotation_i, rots, mptr)| chain![
-                    [rots
-                        .first()
-                        .map(|rot| {
+                izip!(set.rots(), &coeff_points, coeff_mptrs).flat_map(
+                    |(rot_i, coeff_points, coeff_mptr)| chain![
+                        [coeff_points
+                            .first()
+                            .map(|(point_i, point_j)| {
+                                format!("coeff := addmod({point_i}, sub(r, {point_j}), r)")
+                            })
+                            .unwrap_or_else(|| { "coeff := 1".to_string() })],
+                        coeff_points.iter().skip(1).map(|(point_i, point_j)| {
+                            let item = format!("addmod({point_i}, sub(r, {point_j}), r)",);
+                            format!("coeff := mulmod(coeff, {item}, r)")
+                        }),
+                        [
                             format!(
-                                "coeff := addmod(point_{}, sub(r, point_{}), r)",
-                                point_idx[&rot.0], point_idx[&rot.1]
-                            )
-                        })
-                        .unwrap_or_else(|| { "coeff := 1".to_string() })],
-                    rots.iter().skip(1).map(|(i, j)| {
-                        let item = format!(
-                            "addmod(point_{}, sub(r, point_{}), r)",
-                            point_idx[i], point_idx[j]
-                        );
-                        format!("coeff := mulmod(coeff, {item}, r)")
-                    }),
-                    [
-                        format!(
-                            "coeff := mulmod(coeff, mload(0x{:x}), r)",
-                            mu_minus_point_mptr[rotation_i]
-                        ),
-                        format!("mstore(0x{mptr:x}, coeff)")
-                    ],
-                ])
+                                "coeff := mulmod(coeff, mload({}), r)",
+                                mu_minus_point_mptrs[rot_i]
+                            ),
+                            format!("mstore({coeff_mptr}, coeff)")
+                        ],
+                    ]
+                )
             ]
             .collect_vec()
         })
@@ -346,17 +332,14 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
 
     let normalized_coeff_computations = chain![
         [
-            format!("success := batch_invert(success, 0x{batch_invert_1_end:x}, r)"),
-            format!("let diff_0_inv := mload(0x{diff_0_mptr:x})"),
-            format!("mstore(0x{diff_mptr:x}, diff_0_inv)"),
+            format!("success := batch_invert(success, {first_batch_invert_end}, r)"),
+            format!("let diff_0_inv := mload({diff_0_mptr})"),
+            format!("mstore({diff_mptr}, diff_0_inv)"),
         ],
         ["for", "    {"].map(str::to_string),
         [
-            format!("        let mptr := 0x{:x}", diff_mptr + 0x20),
-            format!(
-                "        let mptr_end := 0x{:x}",
-                diff_mptr + sets.len() * 0x20
-            ),
+            format!("        let mptr := {}", diff_mptr + 1),
+            format!("        let mptr_end := {}", diff_mptr + sets.len()),
         ],
         [
             "    }",
@@ -371,8 +354,8 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
     ]
     .collect_vec();
 
-    let r_evals_computations = izip!(0.., &sets, &coeff_mptr, (r_eval_mptr..).step_by(0x20)).map(
-        |(idx, set, coeff_mptr, r_eval_mptr)| {
+    let r_evals_computations = izip!(0.., &sets, &coeff_mptrs, r_eval_mptr.range_from()).map(
+        |(idx, set, coeff_mptrs, r_eval_mptr)| {
             chain![
                 [
                     "let zeta := mload(ZETA_MPTR)".to_string(),
@@ -384,45 +367,40 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
                     .rev()
                     .flat_map(|(idx, evals)| {
                         chain![
-                            evals.iter().zip((*coeff_mptr..).step_by(0x20)).map(
-                                |(eval, coeff_mptr)| {
-                                    let item =
-                                        format!("mulmod(mload(0x{coeff_mptr:x}), {eval}, r)");
-                                    format!("r_eval := addmod(r_eval, {item}, r)")
-                                }
-                            ),
+                            izip!(evals, coeff_mptrs).map(|(eval, coeff_mptr)| {
+                                let item = format!("mulmod(mload({coeff_mptr}), {eval}, r)");
+                                format!("r_eval := addmod(r_eval, {item}, r)")
+                            }),
                             (idx != 0).then(|| "r_eval := mulmod(r_eval, zeta, r)".to_string()),
                         ]
                     }),
-                (idx != 0).then(|| format!(
-                    "r_eval := mulmod(r_eval, mload(0x{:x}), r)",
-                    diff_mptr + idx * 0x20
-                )),
-                [format!("mstore(0x{r_eval_mptr:x}, r_eval)")],
+                (idx != 0)
+                    .then(|| format!("r_eval := mulmod(r_eval, mload({}), r)", diff_mptr + idx)),
+                [format!("mstore({r_eval_mptr}, r_eval)")],
             ]
             .collect_vec()
         },
     );
 
     let coeff_sums_computation =
-        izip!(&sets, &coeff_mptr, (sum_mptr..).step_by(0x20)).map(|(set, coeff_mptr, sum_mptr)| {
+        izip!(&coeff_mptrs, sum_mptr.range_from()).map(|(coeff_mptrs, sum_mptr)| {
+            let (coeff_0_mptr, rest_coeff_mptrs) = coeff_mptrs.split_first().unwrap();
             chain![
-                [format!("let sum := mload(0x{coeff_mptr:x})")],
-                (*coeff_mptr..)
-                    .step_by(0x20)
-                    .take(set.rots().len())
-                    .skip(1)
-                    .map(|coeff_mptr| format!("sum := addmod(sum, mload(0x{coeff_mptr:x}), r)")),
-                [format!("mstore(0x{sum_mptr:x}, sum)")],
+                [format!("let sum := mload({coeff_0_mptr})")],
+                rest_coeff_mptrs
+                    .iter()
+                    .map(|coeff_mptr| format!("sum := addmod(sum, mload({coeff_mptr}), r)")),
+                [format!("mstore({sum_mptr}, sum)")],
             ]
             .collect_vec()
         });
 
-    let r_eval_computations = chain![
+    let r_eval_computations =
+        chain![
         ["for", "    {", "        let mptr := 0x00"].map(str::to_string),
         [
-            format!("        let mptr_end := 0x{:x}", batch_invert_2_end),
-            format!("        let sum_mptr := 0x{:x}", sum_mptr),
+            format!("        let mptr_end := {}", second_batch_invert_end),
+            format!("        let sum_mptr := {}", sum_mptr),
         ],
         [
             "    }",
@@ -436,23 +414,23 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         ]
         .map(str::to_string),
         [
-            format!("success := batch_invert(success, 0x{batch_invert_2_end:x}, r)"),
+            format!("success := batch_invert(success, {second_batch_invert_end}, r)"),
             format!(
-                "let r_eval := mulmod(mload(0x{:x}), mload(0x{:x}), r)",
-                batch_invert_2_end - 0x20,
-                r_eval_mptr + (sets.len() - 1) * 0x20
+                "let r_eval := mulmod(mload({}), mload({}), r)",
+                second_batch_invert_end - 1,
+                r_eval_mptr + sets.len() - 1
             )
         ],
         ["for", "    {"].map(str::to_string),
         [
             format!(
-                "        let sum_inv_mptr := 0x{:x}",
-                batch_invert_2_end - 0x40
+                "        let sum_inv_mptr := {}",
+                second_batch_invert_end - 2
             ),
-            format!("        let sum_inv_mptr_end := 0x{:x}", batch_invert_2_end),
+            format!("        let sum_inv_mptr_end := {}", second_batch_invert_end),
             format!(
-                "        let r_eval_mptr := 0x{:x}",
-                r_eval_mptr + (sets.len() - 2) * 0x20
+                "        let r_eval_mptr := {}",
+                r_eval_mptr + sets.len() - 2
             ),
         ],
         [
@@ -469,7 +447,7 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         ]
         .map(str::to_string),
     ]
-    .collect_vec();
+        .collect_vec();
 
     let pairing_input_computations = chain![
         sets.iter().enumerate().rev().flat_map(|(set_idx, set)| {
@@ -508,12 +486,12 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
                 (set_idx != 0).then(|| if set_idx == last_set_idx {
                     format!(
                         "success := ec_mul_acc(success, mload({}))",
-                        diff_mptr + set_idx * 0x20
+                        diff_mptr + set_idx
                     )
                 } else {
                     format!(
                         "success := ec_mul_tmp(success, mload({}))",
-                        diff_mptr + set_idx * 0x20
+                        diff_mptr + set_idx
                     )
                 }),
                 (set_idx != last_set_idx)
@@ -532,7 +510,7 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w.x()),
             format!("mstore(0xa0, {})", w.y()),
-            format!("success := ec_mul_tmp(success, sub(r, mload(0x{vanishing_mptr:x})))"),
+            format!("success := ec_mul_tmp(success, sub(r, mload({vanishing_mptr})))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w_prime.x()),
             format!("mstore(0xa0, {})", w_prime.y()),

@@ -1,4 +1,4 @@
-use crate::BatchOpenScheme::{self, Bdfg21, Gwc19};
+use crate::codegen::pcs::BatchOpenScheme::{self, Bdfg21, Gwc19};
 use askama::{Error, Template};
 use ruint::aliases::U256;
 use std::fmt;
