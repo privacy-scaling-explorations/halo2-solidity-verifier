@@ -1,3 +1,4 @@
+use crate::BatchOpenScheme::{self, Bdfg21, Gwc19};
 use askama::{Error, Template};
 use ruint::aliases::U256;
 use std::fmt;
@@ -20,6 +21,7 @@ impl Halo2VerifyingKey {
 #[derive(Template)]
 #[template(path = "Halo2Verifier.sol")]
 pub(crate) struct Halo2Verifier {
+    pub(crate) scheme: BatchOpenScheme,
     pub(crate) vk: Option<Halo2VerifyingKey>,
     pub(crate) vk_mptr: usize,
     pub(crate) vk_len: usize,

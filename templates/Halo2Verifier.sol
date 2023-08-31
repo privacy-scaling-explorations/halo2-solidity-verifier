@@ -64,7 +64,7 @@ contract Halo2Verifier {
     function verifyProof(
         {%- match vk %}
         {%- when Some with (vk) %}
-        {% when None %}
+        {%- when None %}
         address vk,
         {%- endmatch %}
         bytes calldata proof,
@@ -277,20 +277,19 @@ contract Halo2Verifier {
                     hash_mptr := add(hash_mptr, 0x20)
                 }
 
-                // Read shplonk opening proof
+                // Read batch opening proof
+                {%- match scheme %}
+                {%- when Bdfg21 %}
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // zeta
+                challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)                        // nu
 
-                // zeta, nu
-                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)
-                challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)
+                success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q) // W
 
-                // W
-                success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q)
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // mu
 
-                // mu
-                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)
-
-                // W'
-                success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q)
+                success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q) // W'
+                {%- when Gwc19 %}
+                {%- endmatch %}
 
                 // Read accumulator from instances
                 if mload(HAS_ACCUMULATOR_MPTR) {
@@ -411,7 +410,7 @@ contract Halo2Verifier {
                 mstore(L_0_MPTR, mload({{ (num_neg_lagranges * 32)|hex() }}))
             }
 
-            // Compute quotient commitment and evavluation
+            // Compute quotient evavluation
             {
                 let h_eval_numer
                 let delta := 4131629893567559867359510883348571134090853742863529169391034518566172092834
@@ -425,9 +424,15 @@ contract Halo2Verifier {
                 }
                 {%- endfor %}
 
+                pop(y)
+                pop(delta)
+
                 let h_eval := mulmod(h_eval_numer, mload(X_N_MINUS_1_INV_MPTR), r)
                 mstore(H_EVAL_MPTR, h_eval)
+            }
 
+            // Compute quotient commitment
+            {
                 mstore(0x00, calldataload(LAST_QUOTIENT_X_CPTR))
                 mstore(0x20, calldataload(add(LAST_QUOTIENT_X_CPTR, 0x20)))
                 let x_n := mload(X_N_MPTR)
@@ -447,7 +452,7 @@ contract Halo2Verifier {
                 mstore(H_Y_MPTR, mload(0x20))
             }
 
-            // Compute pairing lhs
+            // Compute pairing lhs and rhs
             {
                 {%- for pcs_computation in pcs_computations %}
                 {
@@ -458,6 +463,7 @@ contract Halo2Verifier {
                 {%- endfor %}
             }
 
+            // Random linear combine with accumulator
             if mload(HAS_ACCUMULATOR_MPTR) {
                 mstore(0x00, mload(ACC_LHS_X_MPTR))
                 mstore(0x20, mload(ACC_LHS_Y_MPTR))
@@ -484,6 +490,7 @@ contract Halo2Verifier {
                 mstore(PAIRING_RHS_Y_MPTR, mload(0x20))
             }
 
+            // Perform pairing
             success := ec_pairing(
                 success,
                 mload(PAIRING_LHS_X_MPTR),

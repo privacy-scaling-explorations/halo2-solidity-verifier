@@ -16,6 +16,7 @@ use std::{
 pub(crate) struct ConstraintSystemMeta {
     pub(crate) num_fixeds: usize,
     pub(crate) permutation_columns: Vec<Column<Any>>,
+    pub(crate) permutation_chunk_len: usize,
     pub(crate) num_lookup_permuteds: usize,
     pub(crate) num_permutation_zs: usize,
     pub(crate) num_lookup_zs: usize,
@@ -34,6 +35,7 @@ impl ConstraintSystemMeta {
     pub(crate) fn new<F: PrimeField>(cs: &ConstraintSystem<F>) -> Self {
         let num_fixeds = cs.num_fixed_columns();
         let permutation_columns = cs.permutation().get_columns();
+        let permutation_chunk_len = cs.degree() - 2;
         let num_lookup_permuteds = 2 * cs.lookups().len();
         let num_permutation_zs = cs
             .permutation()
@@ -87,6 +89,7 @@ impl ConstraintSystemMeta {
         Self {
             num_fixeds,
             permutation_columns,
+            permutation_chunk_len,
             num_lookup_permuteds,
             num_permutation_zs,
             num_lookup_zs,
@@ -416,4 +419,20 @@ impl EcPoint {
     pub(crate) fn y(&self) -> &U256Expr {
         &self.y
     }
+}
+
+pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|line| format!("{}{line}", " ".repeat(N * 4)))
+        .collect()
+}
+
+pub(crate) fn code_block<const N: usize>(lines: impl IntoIterator<Item = String>) -> Vec<String> {
+    chain![
+        [format!("{}{{", " ".repeat((N - 1) * 4))],
+        indent::<N>(lines),
+        [format!("{}}}", " ".repeat((N - 1) * 4))],
+    ]
+    .collect()
 }

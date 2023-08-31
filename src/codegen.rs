@@ -206,7 +206,7 @@ where
         let vk_mptr = self.estimate_working_memory_size(&vk, proof_cptr);
         let data = Data::new(&self.meta, self.scheme, &vk, vk_mptr, proof_cptr);
 
-        let evaluator = Evaluator::new(self.vk.cs(), &data);
+        let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
         let h_eval_numer_computations = chain![
             evaluator.gate_computations(),
             evaluator.permutation_computations(),
@@ -230,6 +230,7 @@ where
         };
 
         Halo2Verifier {
+            scheme: self.scheme,
             vk: (!separate).then_some(vk),
             vk_len,
             vk_mptr,

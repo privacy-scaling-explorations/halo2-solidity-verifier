@@ -1,4 +1,9 @@
-use crate::{codegen::util::Data, fe_to_u256};
+#![allow(clippy::useless_format)]
+
+use crate::{
+    codegen::util::{code_block, ConstraintSystemMeta, Data},
+    fe_to_u256,
+};
 use halo2_proofs::{
     halo2curves::ff::PrimeField,
     plonk::{
@@ -13,6 +18,7 @@ use std::{borrow::Borrow, cell::RefCell, cmp::Ordering, collections::HashMap, it
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
     cs: &'a ConstraintSystem<F>,
+    meta: &'a ConstraintSystemMeta,
     data: &'a Data,
     var_counter: RefCell<usize>,
     var_cache: RefCell<HashMap<String, String>>,
@@ -22,9 +28,14 @@ impl<'a, F> Evaluator<'a, F>
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
-    pub(crate) fn new(cs: &'a ConstraintSystem<F>, data: &'a Data) -> Self {
+    pub(crate) fn new(
+        cs: &'a ConstraintSystem<F>,
+        meta: &'a ConstraintSystemMeta,
+        data: &'a Data,
+    ) -> Self {
         Self {
             cs,
+            meta,
             data,
             var_counter: Default::default(),
             var_cache: Default::default(),
@@ -41,88 +52,66 @@ where
     }
 
     pub fn permutation_computations(&self) -> Vec<(Vec<String>, String)> {
-        let permutation_columns = self.cs.permutation().get_columns();
-        let permutation_chunk_len = self.cs.degree() - 2;
-        let num_permutation_zs = permutation_columns.chunks(permutation_chunk_len).count();
-
+        let Self { meta, data, .. } = self;
+        let last_chunk_idx = meta.num_permutation_zs - 1;
         chain![
-            self.data.permutation_z_evals.first().map(|evals| {
+            data.permutation_z_evals.first().map(|(z, _, _)| {
                 vec![
-                    "let l_0 := mload(L_0_MPTR)".to_string(),
-                    format!("let perm_z_0 := {}", evals.0),
-                    "let eval := addmod(l_0, sub(r, mulmod(l_0, perm_z_0, r)), r)".to_string(),
+                    format!("let l_0 := mload(L_0_MPTR)"),
+                    format!("let eval := addmod(l_0, sub(r, mulmod(l_0, {z}, r)), r)"),
                 ]
             }),
-            self.data.permutation_z_evals.last().map(|evals| {
+            data.permutation_z_evals.last().map(|(z, _, _)| {
                 let item = "addmod(mulmod(perm_z_last, perm_z_last, r), sub(r, perm_z_last), r)";
                 vec![
-                    "let l_last := mload(L_LAST_MPTR)".to_string(),
-                    format!("let perm_z_last := {}", evals.0),
-                    format!("let eval := mulmod(l_last, {item}, r)"),
+                    format!("let perm_z_last := {z}"),
+                    format!("let eval := mulmod(mload(L_LAST_MPTR), {item}, r)"),
                 ]
             }),
+            data.permutation_z_evals.iter().tuple_windows().map(
+                |((_, _, z_i_last), (z_j, _, _))| {
+                    let item = format!("addmod({z_j}, sub(r, {z_i_last}), r)");
+                    vec![format!("let eval := mulmod(mload(L_0_MPTR), {item}, r)")]
+                }
+            ),
             izip!(
-                &self.data.permutation_z_evals,
-                &self.data.permutation_z_evals[1..]
-            )
-            .map(|(evals, evals_next)| {
-                vec![
-                    "let l_0 := mload(L_0_MPTR)".to_string(),
-                    format!("let perm_z_i_last := {}", evals.2),
-                    format!("let perm_z_j := {}", evals_next.0),
-                    "let eval := mulmod(l_0, addmod(perm_z_j, sub(r, perm_z_i_last), r), r)"
-                        .to_string(),
-                ]
-            }),
-            izip!(
-                permutation_columns.chunks(permutation_chunk_len),
-                &self.data.permutation_z_evals,
+                meta.permutation_columns.chunks(meta.permutation_chunk_len),
+                &data.permutation_z_evals,
             )
             .enumerate()
             .map(|(chunk_idx, (columns, evals))| {
+                let last_column_idx = columns.len() - 1;
                 chain![
                     [
-                        "let gamma := mload(GAMMA_MPTR)".to_string(),
-                        format!("let left := {}", evals.1),
-                        format!("let right := {}", evals.0),
-                        "let tmp".to_string(),
+                        format!("let gamma := mload(GAMMA_MPTR)"),
+                        format!("let beta := mload(BETA_MPTR)"),
+                        format!("let lhs := {}", evals.1),
+                        format!("let rhs := {}", evals.0),
                     ],
                     columns.iter().flat_map(|column| {
-                        let item = format!(
-                            "mulmod(mload(BETA_MPTR), {}, r)",
-                            self.data.permutation_evals[column],
-                        );
-                        [
-                            format!(
-                                "tmp := addmod(addmod({}, {item}, r), gamma, r)",
-                                self.eval(*column.column_type(), column.index(), 0),
-                            ),
-                            "left := mulmod(left, tmp, r)".to_string(),
-                        ]
+                        let perm_eval = &data.permutation_evals[column];
+                        let eval = self.eval(*column.column_type(), column.index(), 0);
+                        let item = format!("mulmod(beta, {perm_eval}, r)");
+                        [format!(
+                            "lhs := mulmod(lhs, addmod(addmod({eval}, {item}, r), gamma, r), r)"
+                        )]
                     }),
+                    (chunk_idx == 0)
+                        .then(|| "mstore(0x00, mulmod(beta, mload(X_MPTR), r))".to_string()),
                     columns.iter().enumerate().flat_map(|(idx, column)| {
+                        let eval = self.eval(*column.column_type(), column.index(), 0);
+                        let item = format!("addmod(addmod({eval}, mload(0x00), r), gamma, r)");
                         chain![
-                            (chunk_idx == 0 && idx == 0).then(|| {
-                                "mstore(0x00, mulmod(mload(BETA_MPTR), mload(X_MPTR), r))"
-                                    .to_string()
-                            }),
-                            [
-                                format!(
-                                    "tmp := addmod(addmod({}, mload(0x00), r), gamma, r)",
-                                    self.eval(*column.column_type(), column.index(), 0),
-                                ),
-                                "right := mulmod(right, tmp, r)".to_string(),
-                            ],
-                            (!(chunk_idx == num_permutation_zs - 1 && idx == columns.len() - 1))
+                            [format!("rhs := mulmod(rhs, {item}, r)")],
+                            (!(chunk_idx == last_chunk_idx && idx == last_column_idx))
                                 .then(|| "mstore(0x00, mulmod(mload(0x00), delta, r))".to_string()),
                         ]
                     }),
                     {
-                        let item = "sub(r, mulmod(left_sub_right, addmod(l_last, l_blind, r), r))";
+                        let item = format!("addmod(mload(L_LAST_MPTR), mload(L_BLIND_MPTR), r)");
+                        let item = format!("sub(r, mulmod(left_sub_right, {item}, r))");
                         [
-                            "let l_blind := mload(L_BLIND_MPTR)".to_string(),
-                            "let l_last := mload(L_LAST_MPTR)".to_string(),
-                            "let left_sub_right := addmod(left, sub(r, right), r)".to_string(),
+                            format!("let left_sub_right := addmod(lhs, sub(r, rhs), r)"),
                             format!("let eval := addmod(left_sub_right, {item}, r)"),
                         ]
                     }
@@ -140,122 +129,93 @@ where
             .lookups()
             .iter()
             .map(|lookup| {
-                let (input_lines, inputs) = lookup
-                    .input_expressions()
-                    .iter()
-                    .map(|expression| self.evaluate(expression))
-                    .fold((Vec::new(), Vec::new()), |mut acc, result| {
-                        acc.0.extend(result.0);
-                        acc.1.push(result.1);
-                        acc
+                let [(input_lines, inputs), (table_lines, tables)] =
+                    [lookup.input_expressions(), lookup.table_expressions()].map(|expressions| {
+                        let (lines, inputs) = expressions
+                            .iter()
+                            .map(|expression| self.evaluate(expression))
+                            .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                                acc.0.extend(result.0);
+                                acc.1.push(result.1);
+                                acc
+                            });
+                        self.reset();
+                        (lines, inputs)
                     });
-                self.reset();
-                let (table_lines, tables) = lookup
-                    .table_expressions()
-                    .iter()
-                    .map(|expression| self.evaluate(expression))
-                    .fold((Vec::new(), Vec::new()), |mut acc, result| {
-                        acc.0.extend(result.0);
-                        acc.1.push(result.1);
-                        acc
-                    });
-                self.reset();
                 (input_lines, inputs, table_lines, tables)
             })
             .collect_vec();
         izip!(input_tables, &self.data.lookup_evals)
-            .flat_map(|((input_lines, inputs, table_lines, tables), evals)| {
+            .flat_map(|(input_table, evals)| {
+                let (input_lines, inputs, table_lines, tables) = input_table;
+                let (input_0, rest_inputs) = inputs.split_first().unwrap();
+                let (table_0, rest_tables) = tables.split_first().unwrap();
+                let (z, z_next, p_input, p_input_prev, p_table) = evals;
                 [
                     vec![
-                        "let l_0 := mload(L_0_MPTR)".to_string(),
-                        format!(
-                            "let eval := addmod(l_0, mulmod(l_0, sub(r, {}), r), r)",
-                            evals.0
-                        ),
+                        format!("let l_0 := mload(L_0_MPTR)"),
+                        format!("let eval := addmod(l_0, mulmod(l_0, sub(r, {z}), r), r)",),
                     ],
                     {
-                        let item = format!(
-                            "addmod(mulmod({}, {}, r), sub(r, {}), r)",
-                            evals.0, evals.0, evals.0
-                        );
+                        let item = format!("addmod(mulmod({z}, {z}, r), sub(r, {z}), r)",);
                         vec![
-                            "let l_last := mload(L_LAST_MPTR)".to_string(),
+                            format!("let l_last := mload(L_LAST_MPTR)"),
                             format!("let eval := mulmod(l_last, {item}, r)"),
                         ]
                     },
                     chain![
-                        [
-                            "let theta := mload(THETA_MPTR)",
-                            "let beta := mload(BETA_MPTR)",
-                            "let gamma := mload(GAMMA_MPTR)",
-                            "let input",
-                            "{"
-                        ]
-                        .map(str::to_string),
-                        chain![
+                        ["let theta := mload(THETA_MPTR)", "let input"].map(str::to_string),
+                        code_block::<1>(chain![
                             input_lines,
-                            [format!("input := {}", &inputs[0])],
-                            inputs[1..].iter().flat_map(|input| [
-                                "input := mulmod(input, theta, r)".to_string(),
-                                format!("input := addmod(input, {input}, r)"),
-                            ])
-                        ]
-                        .map(|line| format!("    {line}")),
-                        ["}".to_string()],
-                        ["let table", "{"].map(str::to_string),
-                        chain![
+                            [format!("input := {input_0}")],
+                            rest_inputs.iter().map(|input| format!(
+                                "input := addmod(mulmod(input, theta, r), {input}, r)"
+                            ))
+                        ]),
+                        ["let table"].map(str::to_string),
+                        code_block::<1>(chain![
                             table_lines,
-                            [format!("table := {}", &tables[0])],
-                            tables[1..].iter().flat_map(|table| [
-                                "table := mulmod(table, theta, r)".to_string(),
-                                format!("table := addmod(table, {table}, r)"),
-                            ])
-                        ]
-                        .map(|line| format!("    {line}")),
-                        ["}".to_string()],
+                            [format!("table := {table_0}")],
+                            rest_tables.iter().map(|table| format!(
+                                "table := addmod(mulmod(table, theta, r), {table}, r)"
+                            ))
+                        ]),
                         {
-                            let permuted = format!(
-                                "mulmod(addmod({}, beta, r), addmod({}, gamma, r), r)",
-                                evals.2, evals.4
-                            );
+                            let lhs = format!("addmod({p_input}, beta, r)");
+                            let rhs = format!("addmod({p_table}, gamma, r)");
+                            let permuted = format!("mulmod({lhs}, {rhs}, r)",);
                             let input =
                                 "mulmod(addmod(input, beta, r), addmod(table, gamma, r), r)";
                             [
-                                format!("let left := mulmod({}, {permuted}, r)", evals.1),
-                                format!("let right := mulmod({}, {input}, r)", evals.0),
+                                format!("let beta := mload(BETA_MPTR)"),
+                                format!("let gamma := mload(GAMMA_MPTR)"),
+                                format!("let lhs := mulmod({z_next}, {permuted}, r)"),
+                                format!("let rhs := mulmod({z}, {input}, r)"),
                             ]
                         },
-                        [
-                            "let l_blind := mload(L_BLIND_MPTR)",
-                            "let l_last := mload(L_LAST_MPTR)",
-                            "let l_active := addmod(1, sub(r, addmod(l_last, l_blind, r)), r)",
-                            "let eval := mulmod(l_active, addmod(left, sub(r, right), r), r)"
-                        ]
-                        .map(str::to_string),
+                        {
+                            let l_inactive = "addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), r)";
+                            let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
+                            [format!(
+                                "let eval := mulmod({l_active}, addmod(lhs, sub(r, rhs), r), r)"
+                            )]
+                        },
                     ]
                     .collect_vec(),
-                    vec![
-                        "let l_0 := mload(L_0_MPTR)".to_string(),
-                        format!(
-                            "let eval := mulmod(l_0, addmod({}, sub(r, {}), r), r)",
-                            evals.2, evals.4
-                        ),
-                    ],
-                    vec![
-                        "let l_blind := mload(L_BLIND_MPTR)".to_string(),
-                        "let l_last := mload(L_LAST_MPTR)".to_string(),
-                        "let l_active := addmod(1, sub(r, addmod(l_last, l_blind, r)), r)"
-                            .to_string(),
-                        format!("let eval := l_active"),
-                        format!(
-                            "eval := mulmod(eval, addmod({}, sub(r, {}), r), r)",
-                            evals.2, evals.4
-                        ),
-                        format!(
-                            "eval := mulmod(eval, addmod({}, sub(r, {}), r), r)",
-                            evals.2, evals.3
-                        ),
-                    ],
+                    {
+                        let l_0 = "mload(L_0_MPTR)";
+                        let item = format!("addmod({p_input}, sub(r, {p_table}), r)");
+                        vec![format!("let eval := mulmod({l_0}, {item}, r)")]
+                    },
+                    {
+                        let l_inactive = "addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), r)";
+                        let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
+                        let lhs = format!("addmod({p_input}, sub(r, {p_table}), r)");
+                        let rhs = format!("addmod({p_input}, sub(r, {p_input_prev}), r)");
+                        vec![format!(
+                            "let eval := mulmod({l_active}, mulmod({lhs}, {rhs}, r), r)"
+                        )]
+                    },
                 ]
             })
             .zip(iter::repeat("eval".to_string()))
@@ -366,13 +326,13 @@ fn fixed_eval_var(fixed_query: FixedQuery) -> String {
     let rotation = fixed_query.rotation().0;
     match rotation.cmp(&0) {
         Ordering::Less => {
-            format!("f_{}_rot_neg_{}", column_index, rotation.abs())
+            format!("f_{}_prev_{}", column_index, rotation.abs())
         }
         Ordering::Equal => {
             format!("f_{}", column_index)
         }
         Ordering::Greater => {
-            format!("f_{}_rot_{}", column_index, rotation)
+            format!("f_{}_next_{}", column_index, rotation)
         }
     }
 }
@@ -382,13 +342,13 @@ fn advice_eval_var(advice_query: AdviceQuery) -> String {
     let rotation = advice_query.rotation().0;
     match rotation.cmp(&0) {
         Ordering::Less => {
-            format!("a_{}_rot_neg_{}", column_index, rotation.abs())
+            format!("a_{}_prev_{}", column_index, rotation.abs())
         }
         Ordering::Equal => {
             format!("a_{}", column_index)
         }
         Ordering::Greater => {
-            format!("a_{}_rot_{}", column_index, rotation)
+            format!("a_{}_next_{}", column_index, rotation)
         }
     }
 }
