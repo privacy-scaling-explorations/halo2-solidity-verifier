@@ -165,7 +165,7 @@ where
                     },
                     chain![
                         ["let theta := mload(THETA_MPTR)", "let input"].map(str::to_string),
-                        code_block::<1>(chain![
+                        code_block::<1, false>(chain![
                             input_lines,
                             [format!("input := {input_0}")],
                             rest_inputs.iter().map(|input| format!(
@@ -173,7 +173,7 @@ where
                             ))
                         ]),
                         ["let table"].map(str::to_string),
-                        code_block::<1>(chain![
+                        code_block::<1, false>(chain![
                             table_lines,
                             [format!("table := {table_0}")],
                             rest_tables.iter().map(|table| format!(

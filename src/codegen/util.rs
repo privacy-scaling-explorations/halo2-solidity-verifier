@@ -251,7 +251,8 @@ impl Data {
             .take(meta.num_lookup_zs)
             .collect();
         let random_comm = random_comm_start;
-        let computed_quotient_comm = EcPoint::mptr_xy("QUOTIENT_X_MPTR", "QUOTIENT_Y_MPTR");
+        let computed_quotient_comm =
+            EcPoint::new(Location::Memory, "QUOTIENT_X_MPTR", "QUOTIENT_Y_MPTR");
 
         let challenges = meta
             .challenge_index
@@ -321,8 +322,23 @@ impl Data {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Location {
+    Calldata,
+    Memory,
+}
+
+impl Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Location::Calldata => write!(f, "calldataload"),
+            Location::Memory => write!(f, "mload"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ptr {
-    Literal(usize),
+    Integer(usize),
     Identifier(&'static str),
 }
 
@@ -331,25 +347,32 @@ impl Ptr {
         (0..).map(|idx| *self + idx)
     }
 
-    fn as_usize(&self) -> usize {
+    pub(crate) fn is_integer(&self) -> bool {
         match self {
-            Ptr::Literal(literal) => *literal,
-            _ => unreachable!(),
+            Ptr::Integer(_) => true,
+            Ptr::Identifier(_) => false,
+        }
+    }
+
+    pub(crate) fn as_usize(&self) -> usize {
+        match self {
+            Ptr::Integer(int) => *int,
+            Ptr::Identifier(_) => unreachable!(),
         }
     }
 }
 
 impl Default for Ptr {
     fn default() -> Self {
-        Self::Literal(0)
+        Self::Integer(0)
     }
 }
 
 impl Display for Ptr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Ptr::Literal(literal) => {
-                let hex = format!("{literal:x}");
+            Ptr::Integer(int) => {
+                let hex = format!("{int:x}");
                 if hex.len() % 2 == 1 {
                     write!(f, "0x0{hex}")
                 } else {
@@ -370,8 +393,8 @@ impl From<&'static str> for Ptr {
 }
 
 impl From<usize> for Ptr {
-    fn from(literal: usize) -> Self {
-        Ptr::Literal(literal)
+    fn from(int: usize) -> Self {
+        Ptr::Integer(int)
     }
 }
 
@@ -403,36 +426,44 @@ macro_rules! ptr {
 pub(crate) use ptr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum U256Expr {
-    Memory(Ptr),
-    Calldata(Ptr),
+pub(crate) struct U256Expr {
+    loc: Location,
+    ptr: Ptr,
 }
 
 impl U256Expr {
+    pub(crate) fn new(loc: Location, ptr: impl Into<Ptr>) -> Self {
+        Self {
+            loc,
+            ptr: ptr.into(),
+        }
+    }
+
     pub(crate) fn mptr(ptr: impl Into<Ptr>) -> Self {
-        U256Expr::Memory(ptr.into())
+        Self::new(Location::Memory, ptr.into())
     }
 
     pub(crate) fn cptr(ptr: impl Into<Ptr>) -> Self {
-        U256Expr::Calldata(ptr.into())
+        Self::new(Location::Calldata, ptr.into())
+    }
+
+    pub(crate) fn loc(&self) -> Location {
+        self.loc
     }
 
     pub(crate) fn ptr(&self) -> Ptr {
-        match self {
-            U256Expr::Memory(mptr) => *mptr,
-            U256Expr::Calldata(cptr) => *cptr,
-        }
+        self.ptr
     }
 }
 
 impl Display for U256Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            U256Expr::Memory(mptr) => {
-                write!(f, "mload({mptr})")
+        match self.loc {
+            Location::Memory => {
+                write!(f, "{}({})", self.loc, self.ptr)
             }
-            U256Expr::Calldata(cptr) => {
-                write!(f, "calldataload({cptr})")
+            Location::Calldata => {
+                write!(f, "{}({})", self.loc, self.ptr)
             }
         }
     }
@@ -445,28 +476,29 @@ pub(crate) struct EcPoint {
 }
 
 impl EcPoint {
-    pub(crate) fn mptr_xy(x: impl Into<Ptr>, y: impl Into<Ptr>) -> Self {
+    pub(crate) fn new(loc: Location, x: impl Into<Ptr>, y: impl Into<Ptr>) -> Self {
         Self {
-            x: U256Expr::mptr(x),
-            y: U256Expr::mptr(y),
+            x: U256Expr::new(loc, x),
+            y: U256Expr::new(loc, y),
         }
     }
 
     pub(crate) fn mptr(mptr: impl Into<Ptr>) -> Self {
         let mptr = mptr.into();
-        Self::mptr_xy(mptr, mptr + 1)
+        Self::new(Location::Memory, mptr, mptr + 1)
     }
 
     pub(crate) fn cptr(cptr: impl Into<Ptr>) -> Self {
         let cptr = cptr.into();
-        Self {
-            x: U256Expr::cptr(cptr),
-            y: U256Expr::cptr(cptr + 1),
-        }
+        Self::new(Location::Calldata, cptr, cptr + 1)
     }
 
     pub(crate) fn range_from(&self) -> impl Iterator<Item = EcPoint> + '_ {
         (0..).map(|idx| *self + idx)
+    }
+
+    pub(crate) fn loc(&self) -> Location {
+        self.x.loc()
     }
 
     pub(crate) fn x(&self) -> &U256Expr {
@@ -485,16 +517,18 @@ impl Add<usize> for EcPoint {
         let x = self.x().ptr() + 2 * rhs;
         let y = self.y().ptr() + 2 * rhs;
         assert_eq!(x + 1, y);
-        match self.x {
-            U256Expr::Memory(_) => Self {
-                x: U256Expr::Memory(x),
-                y: U256Expr::Memory(y),
-            },
-            U256Expr::Calldata(_) => Self {
-                x: U256Expr::Calldata(x),
-                y: U256Expr::Calldata(y),
-            },
-        }
+        Self::new(self.loc(), x, y)
+    }
+}
+
+impl Sub<usize> for EcPoint {
+    type Output = EcPoint;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        let x = self.x().ptr() - 2 * rhs;
+        let y = self.y().ptr() - 2 * rhs;
+        assert_eq!(x + 1, y);
+        Self::new(self.loc(), x, y)
     }
 }
 
@@ -505,11 +539,35 @@ pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) ->
         .collect()
 }
 
-pub(crate) fn code_block<const N: usize>(lines: impl IntoIterator<Item = String>) -> Vec<String> {
+pub(crate) fn code_block<const N: usize, const SHRINK: bool>(
+    lines: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let lines = lines.into_iter().collect_vec();
+    let bracket_indent = " ".repeat((N - 1) * 4);
+    match lines.len() {
+        0 => vec![format!("{bracket_indent}{{}}")],
+        1 if SHRINK => vec![format!("{bracket_indent}{{ {} }}", lines[0])],
+        _ => chain![
+            [format!("{bracket_indent}{{")],
+            indent::<N>(lines),
+            [format!("{bracket_indent}}}")],
+        ]
+        .collect(),
+    }
+}
+
+pub(crate) fn for_loop(
+    initialization: impl IntoIterator<Item = String>,
+    cnodition: impl Into<String>,
+    advancement: impl IntoIterator<Item = String>,
+    body: impl IntoIterator<Item = String>,
+) -> Vec<String> {
     chain![
-        [format!("{}{{", " ".repeat((N - 1) * 4))],
-        indent::<N>(lines),
-        [format!("{}}}", " ".repeat((N - 1) * 4))],
+        ["for".to_string()],
+        code_block::<2, true>(initialization),
+        indent::<1>([cnodition.into()]),
+        code_block::<2, true>(advancement),
+        code_block::<1, false>(body),
     ]
     .collect()
 }

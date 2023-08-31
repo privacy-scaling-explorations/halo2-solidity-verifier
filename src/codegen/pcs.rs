@@ -1,6 +1,8 @@
 #![allow(clippy::useless_format)]
 
-use crate::codegen::util::{ptr, ConstraintSystemMeta, Data, EcPoint, Ptr, U256Expr};
+use crate::codegen::util::{
+    for_loop, ptr, ConstraintSystemMeta, Data, EcPoint, Location, Ptr, U256Expr,
+};
 use itertools::{chain, izip, Itertools};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -188,8 +190,8 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
         .zip((free_mptr + superset.len()).range_from())
         .collect::<BTreeMap<_, _>>();
 
-    let vanishing_mptr = free_mptr + superset.len() * 2;
-    let diff_mptr = vanishing_mptr + 1;
+    let vanishing_0_mptr = free_mptr + 2 * superset.len();
+    let diff_mptr = vanishing_0_mptr + 1;
     let r_eval_mptr = diff_mptr + sets.len();
     let sum_mptr = r_eval_mptr + sets.len();
 
@@ -228,29 +230,25 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
     .collect_vec();
 
     let vanishing_computations = chain![
-        ["let mu := mload(MU_MPTR)", "for", "    {",].map(str::to_string),
-        [
-            format!(
-                "        let mptr := {}",
-                mu_minus_point_mptrs.first_key_value().unwrap().1
-            ),
-            format!(
-                "        let mptr_end := {}",
-                *mu_minus_point_mptrs.first_key_value().unwrap().1 + mu_minus_point_mptrs.len()
-            ),
-            format!("        let point_mptr := {free_mptr}"),
-        ],
-        [
-            "    }",
-            "    lt(mptr, mptr_end)",
-            "    {}",
-            "{",
-            "    mstore(mptr, addmod(mu, sub(r, mload(point_mptr)), r))",
-            "    mptr := add(mptr, 0x20)",
-            "    point_mptr := add(point_mptr, 0x20)",
-            "}",
-        ]
-        .map(str::to_string),
+        ["let mu := mload(MU_MPTR)".to_string()],
+        {
+            let mptr = *mu_minus_point_mptrs.first_key_value().unwrap().1;
+            let mptr_end = mptr + mu_minus_point_mptrs.len();
+            for_loop(
+                [
+                    format!("let mptr := {mptr}"),
+                    format!("let mptr_end := {mptr_end}"),
+                    format!("let point_mptr := {free_mptr}"),
+                ],
+                "lt(mptr, mptr_end)",
+                [
+                    "mptr := add(mptr, 0x20)",
+                    "point_mptr := add(point_mptr, 0x20)",
+                ]
+                .map(str::to_string),
+                ["mstore(mptr, addmod(mu, sub(r, mload(point_mptr)), r))".to_string()],
+            )
+        },
         ["let s".to_string()],
         chain![
             [format!(
@@ -261,25 +259,23 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
                 let item = format!("mload({})", mu_minus_point_mptrs[rot]);
                 format!("s := mulmod(s, {item}, r)")
             }),
-            [format!("mstore({}, s)", vanishing_mptr)],
+            [format!("mstore({}, s)", vanishing_0_mptr)],
         ],
         ["let diff".to_string()],
-        sets.iter()
-            .zip(diff_mptr.range_from())
-            .flat_map(|(set, mptr)| {
-                chain![
-                    [format!(
-                        "diff := mload({})",
-                        mu_minus_point_mptrs[set.diffs().first().unwrap()]
-                    )],
-                    set.diffs().iter().skip(1).map(|rot| {
-                        let item = format!("mload({})", mu_minus_point_mptrs[rot]);
-                        format!("diff := mulmod(diff, {item}, r)")
-                    }),
-                    [format!("mstore({}, diff)", mptr)],
-                    (mptr == diff_mptr).then(|| format!("mstore({diff_0_mptr}, diff)")),
-                ]
-            })
+        izip!(&sets, diff_mptr.range_from()).flat_map(|(set, mptr)| {
+            chain![
+                [format!(
+                    "diff := mload({})",
+                    mu_minus_point_mptrs[set.diffs().first().unwrap()]
+                )],
+                set.diffs().iter().skip(1).map(|rot| {
+                    let item = format!("mload({})", mu_minus_point_mptrs[rot]);
+                    format!("diff := mulmod(diff, {item}, r)")
+                }),
+                [format!("mstore({}, diff)", mptr)],
+                (mptr == diff_mptr).then(|| format!("mstore({diff_0_mptr}, diff)")),
+            ]
+        })
     ]
     .collect_vec();
 
@@ -336,44 +332,37 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
             format!("let diff_0_inv := mload({diff_0_mptr})"),
             format!("mstore({diff_mptr}, diff_0_inv)"),
         ],
-        ["for", "    {"].map(str::to_string),
-        [
-            format!("        let mptr := {}", diff_mptr + 1),
-            format!("        let mptr_end := {}", diff_mptr + sets.len()),
-        ],
-        [
-            "    }",
-            "    lt(mptr, mptr_end)",
-            "    {}",
-            "{",
-            "    mstore(mptr, mulmod(mload(mptr), diff_0_inv, r))",
-            "    mptr := add(mptr, 0x20)",
-            "}",
-        ]
-        .map(str::to_string),
+        for_loop(
+            [
+                format!("let mptr := {}", diff_mptr + 1),
+                format!("let mptr_end := {}", diff_mptr + sets.len()),
+            ],
+            "lt(mptr, mptr_end)",
+            ["mptr := add(mptr, 0x20)".to_string()],
+            ["mstore(mptr, mulmod(mload(mptr), diff_0_inv, r))".to_string()],
+        ),
     ]
     .collect_vec();
 
     let r_evals_computations = izip!(0.., &sets, &coeff_mptrs, r_eval_mptr.range_from()).map(
         |(idx, set, coeff_mptrs, r_eval_mptr)| {
             chain![
-                [
-                    "let zeta := mload(ZETA_MPTR)".to_string(),
-                    "let r_eval := 0".to_string(),
-                ],
-                set.evals()
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .flat_map(|(idx, evals)| {
-                        chain![
-                            izip!(evals, coeff_mptrs).map(|(eval, coeff_mptr)| {
-                                let item = format!("mulmod(mload({coeff_mptr}), {eval}, r)");
-                                format!("r_eval := addmod(r_eval, {item}, r)")
-                            }),
-                            (idx != 0).then(|| "r_eval := mulmod(r_eval, zeta, r)".to_string()),
-                        ]
-                    }),
+                (coeff_mptrs.len() == 1).then(|| format!("let coeff := mload({})", coeff_mptrs[0])),
+                ["let zeta := mload(ZETA_MPTR)", "let r_eval := 0",].map(str::to_string),
+                chain![set.evals().iter().enumerate().rev()].flat_map(|(idx, evals)| {
+                    chain![
+                        izip!(evals, coeff_mptrs).map(|(eval, coeff_mptr)| {
+                            let coeff = if coeff_mptrs.len() == 1 {
+                                "coeff".to_string()
+                            } else {
+                                format!("mload({coeff_mptr})")
+                            };
+                            let item = format!("mulmod({coeff}, {eval}, r)");
+                            format!("r_eval := addmod(r_eval, {item}, r)")
+                        }),
+                        (idx != 0).then(|| "r_eval := mulmod(r_eval, zeta, r)".to_string()),
+                    ]
+                }),
                 (idx != 0)
                     .then(|| format!("r_eval := mulmod(r_eval, mload({}), r)", diff_mptr + idx)),
                 [format!("mstore({r_eval_mptr}, r_eval)")],
@@ -395,24 +384,17 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
             .collect_vec()
         });
 
-    let r_eval_computations =
-        chain![
-        ["for", "    {", "        let mptr := 0x00"].map(str::to_string),
-        [
-            format!("        let mptr_end := {}", second_batch_invert_end),
-            format!("        let sum_mptr := {}", sum_mptr),
-        ],
-        [
-            "    }",
-            "    lt(mptr, mptr_end)",
-            "    {}",
-            "{",
-            "    mstore(mptr, mload(sum_mptr))",
-            "    mptr := add(mptr, 0x20)",
-            "    sum_mptr := add(sum_mptr, 0x20)",
-            "}",
-        ]
-        .map(str::to_string),
+    let r_eval_computations = chain![
+        for_loop(
+            [
+                format!("let mptr := 0x00"),
+                format!("let mptr_end := {}", second_batch_invert_end),
+                format!("let sum_mptr := {}", sum_mptr),
+            ],
+            "lt(mptr, mptr_end)",
+            ["mptr := add(mptr, 0x20)", "sum_mptr := add(sum_mptr, 0x20)"].map(str::to_string),
+            ["mstore(mptr, mload(sum_mptr))".to_string()],
+        ),
         [
             format!("success := batch_invert(success, {second_batch_invert_end}, r)"),
             format!(
@@ -421,87 +403,112 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
                 r_eval_mptr + sets.len() - 1
             )
         ],
-        ["for", "    {"].map(str::to_string),
-        [
-            format!(
-                "        let sum_inv_mptr := {}",
-                second_batch_invert_end - 2
-            ),
-            format!("        let sum_inv_mptr_end := {}", second_batch_invert_end),
-            format!(
-                "        let r_eval_mptr := {}",
-                r_eval_mptr + sets.len() - 2
-            ),
-        ],
-        [
-            "    }",
-            "    lt(sum_inv_mptr, sum_inv_mptr_end)",
-            "    {}",
-            "{",
-            "    r_eval := mulmod(r_eval, mload(NU_MPTR), r)",
-            "    r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), r), r)",
-            "    sum_inv_mptr := sub(sum_inv_mptr, 0x20)",
-            "    r_eval_mptr := sub(r_eval_mptr, 0x20)",
-            "}",
-            "mstore(R_EVAL_MPTR, r_eval)",
-        ]
-        .map(str::to_string),
+        for_loop(
+            [
+                format!("let sum_inv_mptr := {}", second_batch_invert_end - 2),
+                format!("let sum_inv_mptr_end := {}", second_batch_invert_end),
+                format!("let r_eval_mptr := {}", r_eval_mptr + sets.len() - 2),
+            ],
+            "lt(sum_inv_mptr, sum_inv_mptr_end)",
+            [
+                "sum_inv_mptr := sub(sum_inv_mptr, 0x20)",
+                "r_eval_mptr := sub(r_eval_mptr, 0x20)"
+            ]
+            .map(str::to_string),
+            [
+                "r_eval := mulmod(r_eval, mload(NU_MPTR), r)",
+                "r_eval := addmod(r_eval, mulmod(mload(sum_inv_mptr), mload(r_eval_mptr), r), r)"
+            ]
+            .map(str::to_string),
+        ),
+        ["mstore(R_EVAL_MPTR, r_eval)".to_string()],
     ]
-        .collect_vec();
+    .collect_vec();
 
     let pairing_input_computations = chain![
         sets.iter().enumerate().rev().flat_map(|(set_idx, set)| {
-            let last_set_idx = sets.len() - 1;
+            let is_first_set = set_idx == 0;
+            let is_last_set = set_idx == sets.len() - 1;
+            let set_coeff_mptr = diff_mptr + set_idx;
+
+            let ec_add = &format!("ec_add_{}", if is_last_set { "acc" } else { "tmp" });
+            let ec_mul = &format!("ec_mul_{}", if is_last_set { "acc" } else { "tmp" });
+            let acc_x = if is_last_set { ptr!() } else { ptr!(4) };
+            let acc_y = acc_x + 1;
+
+            let comm_groups = set.comms().iter().rev().skip(1).fold(
+                Vec::<(Location, Vec<&EcPoint>)>::new(),
+                |mut comm_groups, comm| {
+                    if let Some(last_group) = comm_groups.last_mut() {
+                        let last_comm = **last_group.1.last().unwrap();
+                        if last_group.0 == comm.loc()
+                            && last_comm.x().ptr().is_integer()
+                            && last_comm - 1 == *comm
+                        {
+                            last_group.1.push(comm)
+                        } else {
+                            comm_groups.push((comm.loc(), vec![comm]))
+                        }
+                        comm_groups
+                    } else {
+                        vec![(comm.loc(), vec![comm])]
+                    }
+                },
+            );
+
             chain![
                 set.comms()
                     .last()
                     .map(|comm| {
-                        if set_idx == last_set_idx {
-                            [
-                                format!("mstore(0x00, {})", comm.x()),
-                                format!("mstore(0x20, {})", comm.y()),
-                            ]
-                        } else {
-                            [
-                                format!("mstore(0x80, {})", comm.x()),
-                                format!("mstore(0xa0, {})", comm.y()),
-                            ]
-                        }
+                        [
+                            format!("mstore({acc_x}, {})", comm.x()),
+                            format!("mstore({acc_y}, {})", comm.y()),
+                        ]
                     })
                     .into_iter()
                     .flatten(),
-                set.comms().iter().rev().skip(1).flat_map(move |comm| {
-                    if set_idx == last_set_idx {
-                        [
-                            "success := ec_mul_acc(success, mload(ZETA_MPTR))".to_string(),
-                            format!("success := ec_add_acc(success, {}, {})", comm.x(), comm.y()),
-                        ]
+                comm_groups.iter().flat_map(move |(loc, comms)| {
+                    if comms.len() < 3 {
+                        comms
+                            .iter()
+                            .flat_map(|comm| {
+                                let (x, y) = (comm.x(), comm.y());
+                                [
+                                    format!("success := {ec_mul}(success, mload(ZETA_MPTR))"),
+                                    format!("success := {ec_add}(success, {x}, {y})"),
+                                ]
+                            })
+                            .collect_vec()
                     } else {
-                        [
-                            "success := ec_mul_tmp(success, mload(ZETA_MPTR))".to_string(),
-                            format!("success := ec_add_tmp(success, {}, {})", comm.x(), comm.y()),
-                        ]
+                        let mptr = comms.first().unwrap().x().ptr();
+                        let mptr_end = mptr - 2 * comms.len();
+                        let x = format!("{loc}(mptr)");
+                        let y = format!("{loc}(add(mptr, 0x20))");
+                        for_loop(
+                            [
+                                format!("let mptr := {mptr}"),
+                                format!("let mptr_end := {mptr_end}"),
+                            ],
+                            "lt(mptr_end, mptr)",
+                            ["mptr := sub(mptr, 0x40)".to_string()],
+                            [
+                                format!("success := {ec_mul}(success, mload(ZETA_MPTR))"),
+                                format!("success := {ec_add}(success, {x}, {y})"),
+                            ],
+                        )
                     }
                 }),
-                (set_idx != 0).then(|| if set_idx == last_set_idx {
-                    format!(
-                        "success := ec_mul_acc(success, mload({}))",
-                        diff_mptr + set_idx
-                    )
-                } else {
-                    format!(
-                        "success := ec_mul_tmp(success, mload({}))",
-                        diff_mptr + set_idx
-                    )
-                }),
-                (set_idx != last_set_idx)
+                (!is_first_set)
+                    .then(|| format!("success := {ec_mul}(success, mload({set_coeff_mptr}))",)),
+                (!is_last_set)
                     .then(|| [
-                        "success := ec_mul_acc(success, mload(NU_MPTR))".to_string(),
-                        "success := ec_add_acc(success, mload(0x80), mload(0xa0))".to_string()
+                        format!("success := ec_mul_acc(success, mload(NU_MPTR))"),
+                        format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
                     ])
                     .into_iter()
                     .flatten(),
             ]
+            .collect_vec()
         }),
         [
             format!("mstore(0x80, mload(G1_X_MPTR))"),
@@ -510,7 +517,7 @@ pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> 
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w.x()),
             format!("mstore(0xa0, {})", w.y()),
-            format!("success := ec_mul_tmp(success, sub(r, mload({vanishing_mptr})))"),
+            format!("success := ec_mul_tmp(success, sub(r, mload({vanishing_0_mptr})))"),
             format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
             format!("mstore(0x80, {})", w_prime.x()),
             format!("mstore(0xa0, {})", w_prime.y()),
