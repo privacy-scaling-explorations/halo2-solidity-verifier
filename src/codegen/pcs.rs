@@ -76,7 +76,7 @@ pub(crate) struct RotationSet {
     rots: BTreeSet<i32>,
     diffs: BTreeSet<i32>,
     comms: Vec<EcPoint>,
-    evals: Vec<Vec<String>>,
+    evals: Vec<Vec<U256Expr>>,
 }
 
 impl RotationSet {
@@ -92,7 +92,7 @@ impl RotationSet {
         &self.comms
     }
 
-    pub(crate) fn evals(&self) -> &[Vec<String>] {
+    pub(crate) fn evals(&self) -> &[Vec<U256Expr>] {
         &self.evals
     }
 }
@@ -100,7 +100,7 @@ impl RotationSet {
 pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSet>) {
     let mut superset = BTreeSet::new();
     let comm_queries = queries.iter().fold(
-        Vec::<(EcPoint, BTreeMap<i32, String>)>::new(),
+        Vec::<(EcPoint, BTreeMap<i32, U256Expr>)>::new(),
         |mut comm_queries, query| {
             superset.insert(query.rot);
             if let Some(pos) = comm_queries
@@ -109,12 +109,9 @@ pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSe
             {
                 let (_, queries) = &mut comm_queries[pos];
                 assert!(!queries.contains_key(&query.rot));
-                queries.insert(query.rot, query.eval.to_string());
+                queries.insert(query.rot, query.eval);
             } else {
-                comm_queries.push((
-                    query.comm,
-                    BTreeMap::from_iter([(query.rot, query.eval.to_string())]),
-                ));
+                comm_queries.push((query.comm, BTreeMap::from_iter([(query.rot, query.eval)])));
             }
             comm_queries
         },
@@ -164,7 +161,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
     let coeff_mptrs = sets
         .iter()
         .scan(diff_0_mptr + 1, |state, set| {
-            let ptrs = state.range_from().take(set.rots().len()).collect_vec();
+            let ptrs = Ptr::range_from(*state).take(set.rots().len()).collect_vec();
             *state = *state + set.rots().len();
             Some(ptrs)
         })
@@ -183,11 +180,11 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
         .collect::<BTreeMap<_, _>>();
     let point_mptrs = superset
         .iter()
-        .zip(free_mptr.range_from())
+        .zip(Ptr::range_from(free_mptr))
         .collect::<BTreeMap<_, _>>();
     let mu_minus_point_mptrs = superset
         .iter()
-        .zip((free_mptr + superset.len()).range_from())
+        .zip(Ptr::range_from(free_mptr + superset.len()))
         .collect::<BTreeMap<_, _>>();
 
     let vanishing_0_mptr = free_mptr + 2 * superset.len();
@@ -262,7 +259,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
             [format!("mstore({}, s)", vanishing_0_mptr)],
         ],
         ["let diff".to_string()],
-        izip!(&sets, diff_mptr.range_from()).flat_map(|(set, mptr)| {
+        izip!(&sets, Ptr::range_from(diff_mptr)).flat_map(|(set, mptr)| {
             chain![
                 [format!(
                     "diff := mload({})",
@@ -309,7 +306,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
                             })
                             .unwrap_or_else(|| { "coeff := 1".to_string() })],
                         coeff_points.iter().skip(1).map(|(point_i, point_j)| {
-                            let item = format!("addmod({point_i}, sub(r, {point_j}), r)",);
+                            let item = format!("addmod({point_i}, sub(r, {point_j}), r)");
                             format!("coeff := mulmod(coeff, {item}, r)")
                         }),
                         [
@@ -344,35 +341,87 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
     ]
     .collect_vec();
 
-    let r_evals_computations = izip!(0.., &sets, &coeff_mptrs, r_eval_mptr.range_from()).map(
-        |(idx, set, coeff_mptrs, r_eval_mptr)| {
-            chain![
-                (coeff_mptrs.len() == 1).then(|| format!("let coeff := mload({})", coeff_mptrs[0])),
-                ["let zeta := mload(ZETA_MPTR)", "let r_eval := 0",].map(str::to_string),
-                chain![set.evals().iter().enumerate().rev()].flat_map(|(idx, evals)| {
-                    chain![
-                        izip!(evals, coeff_mptrs).map(|(eval, coeff_mptr)| {
-                            let coeff = if coeff_mptrs.len() == 1 {
-                                "coeff".to_string()
+    let r_evals_computations = izip!(
+        0..,
+        &sets,
+        &coeff_mptrs,
+        Ptr::range_from(diff_mptr),
+        Ptr::range_from(r_eval_mptr),
+    )
+    .map(|(set_idx, set, coeff_mptrs, set_coeff_mptr, r_eval_mptr)| {
+        let is_single_rot_set = set.rots().len() == 1;
+        chain![
+            is_single_rot_set.then(|| format!("let coeff := mload({})", coeff_mptrs[0])),
+            ["let zeta := mload(ZETA_MPTR)", "let r_eval := 0",].map(str::to_string),
+            if is_single_rot_set {
+                let eval_groups = set.evals().iter().rev().fold(
+                    Vec::<Vec<&U256Expr>>::new(),
+                    |mut eval_groups, evals| {
+                        let eval = &evals[0];
+                        if let Some(last_group) = eval_groups.last_mut() {
+                            let last_eval = **last_group.last().unwrap();
+                            if last_eval.ptr().is_integer() && last_eval - 1 == *eval {
+                                last_group.push(eval)
                             } else {
-                                format!("mload({coeff_mptr})")
-                            };
-                            let item = format!("mulmod({coeff}, {eval}, r)");
-                            format!("r_eval := addmod(r_eval, {item}, r)")
-                        }),
-                        (idx != 0).then(|| "r_eval := mulmod(r_eval, zeta, r)".to_string()),
-                    ]
-                }),
-                (idx != 0)
-                    .then(|| format!("r_eval := mulmod(r_eval, mload({}), r)", diff_mptr + idx)),
-                [format!("mstore({r_eval_mptr}, r_eval)")],
-            ]
-            .collect_vec()
-        },
-    );
+                                eval_groups.push(vec![eval])
+                            }
+                            eval_groups
+                        } else {
+                            vec![vec![eval]]
+                        }
+                    },
+                );
+                chain![eval_groups.iter().enumerate()]
+                    .flat_map(|(group_idx, evals)| {
+                        if evals.len() < 3 {
+                            chain![evals.iter().enumerate()]
+                                .flat_map(|(eval_idx, eval)| {
+                                    let is_first_eval = group_idx == 0 && eval_idx == 0;
+                                    let item = format!("mulmod(coeff, {eval}, r)");
+                                    chain![
+                                        (!is_first_eval)
+                                            .then(|| format!("r_eval := mulmod(r_eval, zeta, r)")),
+                                        [format!("r_eval := addmod(r_eval, {item}, r)")],
+                                    ]
+                                })
+                                .collect_vec()
+                        } else {
+                            let item = "mulmod(coeff, calldataload(mptr), r)";
+                            for_loop(
+                                [
+                                    format!("let mptr := {}", evals[0].ptr()),
+                                    format!("let mptr_end := {}", evals[0].ptr() - evals.len()),
+                                ],
+                                "lt(mptr_end, mptr)".to_string(),
+                                ["mptr := sub(mptr, 0x20)".to_string()],
+                                [format!(
+                                    "r_eval := addmod(mulmod(r_eval, zeta, r), {item}, r)"
+                                )],
+                            )
+                        }
+                    })
+                    .collect_vec()
+            } else {
+                chain![set.evals().iter().enumerate().rev()]
+                    .flat_map(|(idx, evals)| {
+                        chain![
+                            izip!(evals, coeff_mptrs).map(|(eval, coeff_mptr)| {
+                                let item = format!("mulmod(mload({coeff_mptr}), {eval}, r)");
+                                format!("r_eval := addmod(r_eval, {item}, r)")
+                            }),
+                            (idx != 0).then(|| format!("r_eval := mulmod(r_eval, zeta, r)")),
+                        ]
+                    })
+                    .collect_vec()
+            },
+            (set_idx != 0).then(|| format!("r_eval := mulmod(r_eval, mload({set_coeff_mptr}), r)")),
+            [format!("mstore({r_eval_mptr}, r_eval)")],
+        ]
+        .collect_vec()
+    });
 
     let coeff_sums_computation =
-        izip!(&coeff_mptrs, sum_mptr.range_from()).map(|(coeff_mptrs, sum_mptr)| {
+        izip!(&coeff_mptrs, Ptr::range_from(sum_mptr)).map(|(coeff_mptrs, sum_mptr)| {
             let (coeff_0_mptr, rest_coeff_mptrs) = coeff_mptrs.split_first().unwrap();
             chain![
                 [format!("let sum := mload({coeff_0_mptr})")],
@@ -426,14 +475,15 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
     .collect_vec();
 
     let pairing_input_computations = chain![
-        sets.iter().enumerate().rev().flat_map(|(set_idx, set)| {
+        ["let nu := mload(NU_MPTR)".to_string()],
+        sets.iter().enumerate().flat_map(|(set_idx, set)| {
             let is_first_set = set_idx == 0;
             let is_last_set = set_idx == sets.len() - 1;
             let set_coeff_mptr = diff_mptr + set_idx;
 
-            let ec_add = &format!("ec_add_{}", if is_last_set { "acc" } else { "tmp" });
-            let ec_mul = &format!("ec_mul_{}", if is_last_set { "acc" } else { "tmp" });
-            let acc_x = if is_last_set { ptr!() } else { ptr!(4) };
+            let ec_add = &format!("ec_add_{}", if is_first_set { "acc" } else { "tmp" });
+            let ec_mul = &format!("ec_mul_{}", if is_first_set { "acc" } else { "tmp" });
+            let acc_x = if is_first_set { ptr!() } else { ptr!(4) };
             let acc_y = acc_x + 1;
 
             let comm_groups = set.comms().iter().rev().skip(1).fold(
@@ -499,12 +549,16 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
                     }
                 }),
                 (!is_first_set)
-                    .then(|| format!("success := {ec_mul}(success, mload({set_coeff_mptr}))",)),
-                (!is_last_set)
-                    .then(|| [
-                        format!("success := ec_mul_acc(success, mload(NU_MPTR))"),
-                        format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
-                    ])
+                    .then(|| {
+                        let scalar = format!("mulmod(nu, mload({set_coeff_mptr}), r)");
+                        chain![
+                            [
+                                format!("success := ec_mul_tmp(success, {scalar})"),
+                                format!("success := ec_add_acc(success, mload(0x80), mload(0xa0))"),
+                            ],
+                            (!is_last_set).then(|| format!("nu := mulmod(nu, mload(NU_MPTR), r)"))
+                        ]
+                    })
                     .into_iter()
                     .flatten(),
             ]

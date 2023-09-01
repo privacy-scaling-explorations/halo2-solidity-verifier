@@ -154,10 +154,10 @@ where
                 [
                     vec![
                         format!("let l_0 := mload(L_0_MPTR)"),
-                        format!("let eval := addmod(l_0, mulmod(l_0, sub(r, {z}), r), r)",),
+                        format!("let eval := addmod(l_0, mulmod(l_0, sub(r, {z}), r), r)"),
                     ],
                     {
-                        let item = format!("addmod(mulmod({z}, {z}, r), sub(r, {z}), r)",);
+                        let item = format!("addmod(mulmod({z}, {z}, r), sub(r, {z}), r)");
                         vec![
                             format!("let l_last := mload(L_LAST_MPTR)"),
                             format!("let eval := mulmod(l_last, {item}, r)"),
@@ -183,7 +183,7 @@ where
                         {
                             let lhs = format!("addmod({p_input}, beta, r)");
                             let rhs = format!("addmod({p_table}, gamma, r)");
-                            let permuted = format!("mulmod({lhs}, {rhs}, r)",);
+                            let permuted = format!("mulmod({lhs}, {rhs}, r)");
                             let input =
                                 "mulmod(addmod(input, beta, r), addmod(table, gamma, r), r)";
                             [

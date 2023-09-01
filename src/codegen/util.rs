@@ -8,6 +8,7 @@ use halo2_proofs::{
 };
 use itertools::{chain, izip, Itertools};
 use std::{
+    borrow::Borrow,
     collections::HashMap,
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
@@ -262,12 +263,12 @@ impl Data {
         let instance_eval = U256Expr::mptr("INSTANCE_EVAL_MPTR");
         let advice_evals = izip!(
             meta.advice_queries.iter().cloned(),
-            advice_eval_cptr.range_from().map(U256Expr::cptr)
+            Ptr::range_from(advice_eval_cptr).map(U256Expr::cptr)
         )
         .collect();
         let fixed_evals = izip!(
             meta.fixed_queries.iter().cloned(),
-            fixed_eval_cptr.range_from().map(U256Expr::cptr)
+            Ptr::range_from(fixed_eval_cptr).map(U256Expr::cptr)
         )
         .collect();
         let random_eval = U256Expr::cptr(random_eval_cptr);
@@ -275,16 +276,14 @@ impl Data {
             .permutation_columns
             .iter()
             .cloned()
-            .zip(permutation_eval_cptr.range_from().map(U256Expr::cptr))
+            .zip(Ptr::range_from(permutation_eval_cptr).map(U256Expr::cptr))
             .collect();
-        let permutation_z_evals = permutation_z_eval_cptr
-            .range_from()
+        let permutation_z_evals = Ptr::range_from(permutation_z_eval_cptr)
             .map(U256Expr::cptr)
             .take(3 * meta.num_permutation_zs)
             .tuples()
             .collect_vec();
-        let lookup_evals = lookup_eval_cptr
-            .range_from()
+        let lookup_evals = Ptr::range_from(lookup_eval_cptr)
             .map(U256Expr::cptr)
             .take(5 * meta.num_lookup_zs)
             .tuples()
@@ -343,8 +342,9 @@ pub(crate) enum Ptr {
 }
 
 impl Ptr {
-    pub(crate) fn range_from(&self) -> impl Iterator<Item = Ptr> + '_ {
-        (0..).map(|idx| *self + idx)
+    pub(crate) fn range_from(ptr: impl Borrow<Ptr>) -> impl Iterator<Item = Ptr> {
+        let ptr = *ptr.borrow();
+        (0..).map(move |idx| ptr + idx)
     }
 
     pub(crate) fn is_integer(&self) -> bool {
@@ -465,6 +465,28 @@ impl Display for U256Expr {
             Location::Calldata => {
                 write!(f, "{}({})", self.loc, self.ptr)
             }
+        }
+    }
+}
+
+impl Add<usize> for U256Expr {
+    type Output = U256Expr;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self {
+            loc: self.loc,
+            ptr: self.ptr + rhs,
+        }
+    }
+}
+
+impl Sub<usize> for U256Expr {
+    type Output = U256Expr;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        Self {
+            loc: self.loc,
+            ptr: self.ptr - rhs,
         }
     }
 }
