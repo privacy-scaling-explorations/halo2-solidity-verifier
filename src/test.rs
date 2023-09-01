@@ -52,7 +52,7 @@ fn run_render<T: halo2::TestCircuit<Fr>>() {
     }
     .into();
     let (param, vk, instances, proof) =
-        halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata_bdfg21::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
 
     let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let verifier_solidity = generator.render().unwrap();
@@ -82,7 +82,7 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
     }
     .into();
     let (param, vk, instances, _) =
-        halo2::create_testdata_shplonk::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata_bdfg21::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
 
     let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
@@ -100,7 +100,7 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
 
     for k in T::min_k()..T::min_k() + 4 {
         let (param, vk, instances, proof) =
-            halo2::create_testdata_shplonk::<Bn256, T>(k, acc_encoding, std_rng());
+            halo2::create_testdata_bdfg21::<Bn256, T>(k, acc_encoding, std_rng());
         let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
 
         let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
@@ -296,7 +296,7 @@ mod halo2 {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn create_testdata_shplonk<M, C>(
+    pub fn create_testdata_bdfg21<M, C>(
         k: u32,
         acc_encoding: Option<AccumulatorEncoding>,
         mut rng: impl RngCore + Clone,
@@ -428,8 +428,8 @@ mod halo2 {
                 pairing::MultiMillerLoop,
             },
             plonk::{
-                self, Advice, Circuit, Column, ConstraintSystem, Expression, Fixed, Instance,
-                Selector,
+                self, Advice, Circuit, Column, ConstraintSystem, Expression, FirstPhase, Fixed,
+                Instance, SecondPhase, Selector, ThirdPhase,
             },
             poly::Rotation,
         };
@@ -489,7 +489,25 @@ mod halo2 {
                 let selectors = [(); 10].map(|_| meta.selector());
                 let complex_selectors = [(); 10].map(|_| meta.complex_selector());
                 let fixeds = [(); 10].map(|_| meta.fixed_column());
-                let advices = [(); 10].map(|_| meta.advice_column());
+                let (advices, challenges) = (0..10)
+                    .map(|idx| match idx % 3 {
+                        0 => (
+                            meta.advice_column_in(FirstPhase),
+                            meta.challenge_usable_after(FirstPhase),
+                        ),
+                        1 => (
+                            meta.advice_column_in(SecondPhase),
+                            meta.challenge_usable_after(SecondPhase),
+                        ),
+                        2 => (
+                            meta.advice_column_in(ThirdPhase),
+                            meta.challenge_usable_after(ThirdPhase),
+                        ),
+                        _ => unreachable!(),
+                    })
+                    .unzip::<_, _, Vec<_>, Vec<_>>();
+                let advices: [_; 10] = advices.try_into().unwrap();
+                let challenges: [_; 10] = challenges.try_into().unwrap();
                 let instance = meta.instance_column();
 
                 meta.create_gate("", |meta| {
@@ -498,10 +516,19 @@ mod halo2 {
                         let rotation = Rotation((idx as i32 - advices.len() as i32) / 2);
                         meta.query_advice(advices[idx], rotation)
                     });
+                    let challenges = challenges.map(|challenge| meta.query_challenge(challenge));
 
-                    izip!(selectors, &advices, &advices[1..], &advices[2..],)
-                        .map(|(q, a1, a2, a3)| q * a1.clone() * a2.clone() * a3.clone())
-                        .collect_vec()
+                    izip!(
+                        selectors,
+                        advices.iter().cloned(),
+                        advices[1..].iter().cloned(),
+                        advices[2..].iter().cloned(),
+                        challenges.iter().cloned(),
+                        challenges[1..].iter().cloned(),
+                        challenges[2..].iter().cloned(),
+                    )
+                    .map(|(q, a1, a2, a3, c1, c2, c3)| q * a1 * a2 * a3 * c1 * c2 * c3)
+                    .collect_vec()
                 });
 
                 for ((q1, q2, q3), (f1, f2, f3), (a1, a2, a3)) in izip!(

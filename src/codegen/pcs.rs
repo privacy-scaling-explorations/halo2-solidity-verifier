@@ -153,7 +153,7 @@ pub(crate) fn rotation_sets(queries: &[Query]) -> (BTreeSet<i32>, Vec<RotationSe
     (superset, sets)
 }
 
-pub(crate) fn shplonk_computations(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Vec<String>> {
+pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Vec<String>> {
     let queries = queries(meta, data);
     let (superset, sets) = rotation_sets(&queries);
 

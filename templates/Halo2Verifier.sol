@@ -72,6 +72,10 @@ contract Halo2Verifier {
         uint256[] calldata instances
     ) public returns (bool) {
         assembly {
+            // Read EC point (x, y) at (proof_cptr, proof_cptr + 0x20),
+            // and check if the point is on affine plane,
+            // and store them in (hash_mptr, hash_mptr + 0x20).
+            // Return updated (success, proof_cptr, hash_mptr).
             function read_ec_point(success, proof_cptr, hash_mptr, q) -> ret0, ret1, ret2 {
                 let x := calldataload(proof_cptr)
                 let y := calldataload(add(proof_cptr, 0x20))
@@ -84,6 +88,10 @@ contract Halo2Verifier {
                 ret2 := add(hash_mptr, 0x40)
             }
 
+            // Squeeze challenge by keccak256(memory[0..hash_mptr]),
+            // and store hash mod r as challenge in challenge_mptr,
+            // and push back hash in 0x00 as the first input for next squeeze.
+            // Return updated (challenge_mptr, hash_mptr).
             function squeeze_challenge(challenge_mptr, hash_mptr, r) -> ret0, ret1 {
                 let hash := keccak256(0x00, hash_mptr)
                 mstore(challenge_mptr, mod(hash, r))
@@ -92,6 +100,11 @@ contract Halo2Verifier {
                 ret1 := 0x20
             }
 
+            // Squeeze challenge without absorbing new input from calldata,
+            // by putting an extra 0x01 in memory[0x20] and squeeze by keccak256(memory[0..21]),
+            // and store hash mod r as challenge in challenge_mptr,
+            // and push back hash in 0x00 as the first input for next squeeze.
+            // Return updated (challenge_mptr).
             function squeeze_challenge_cont(challenge_mptr, r) -> ret {
                 mstore8(0x20, 0x01)
                 let hash := keccak256(0x00, 0x21)
@@ -100,7 +113,8 @@ contract Halo2Verifier {
                 ret := add(challenge_mptr, 0x20)
             }
 
-            // Batch invert values in memory[0..mptr_end] in place and multiply each by scalar
+            // Batch invert values in memory[0..mptr_end] in place.
+            // Return updated (success).
             function batch_invert(success, mptr_end, r) -> ret {
                 let mptr := 0x20
                 let gp_mptr := mptr_end
@@ -144,33 +158,37 @@ contract Halo2Verifier {
                 mstore(0x20, inv_second)
             }
 
-            // Add into (x, y) into point at (0x00, 0x20)
+            // Add (x, y) into point at (0x00, 0x20).
+            // Return updated (success).
             function ec_add_acc(success, x, y) -> ret {
                 mstore(0x40, x)
                 mstore(0x60, y)
                 ret := and(success, staticcall(gas(), 0x06, 0x00, 0x80, 0x00, 0x40))
             }
 
-            // Scale point at (0x00, 0x20) by scalar
+            // Scale point at (0x00, 0x20) by scalar.
             function ec_mul_acc(success, scalar) -> ret {
                 mstore(0x40, scalar)
                 ret := and(success, staticcall(gas(), 0x07, 0x00, 0x60, 0x00, 0x40))
             }
 
-            // Add into (x, y) into point at (0x80, 0xa0)
+            // Add (x, y) into point at (0x80, 0xa0).
+            // Return updated (success).
             function ec_add_tmp(success, x, y) -> ret {
                 mstore(0xc0, x)
                 mstore(0xe0, y)
                 ret := and(success, staticcall(gas(), 0x06, 0x80, 0x80, 0x80, 0x40))
             }
 
-            // Scale point at (0x80, 0xa0) by scalar
+            // Scale point at (0x80, 0xa0) by scalar.
+            // Return updated (success).
             function ec_mul_tmp(success, scalar) -> ret {
                 mstore(0xc0, scalar)
                 ret := and(success, staticcall(gas(), 0x07, 0x80, 0x60, 0x80, 0x40))
             }
 
-            // Perform pairing check
+            // Perform pairing check.
+            // Return updated (success).
             function ec_pairing(success, lhs_x, lhs_y, rhs_x, rhs_y) -> ret {
                 mstore(0x00, lhs_x)
                 mstore(0x20, lhs_y)
@@ -188,9 +206,9 @@ contract Halo2Verifier {
                 ret := and(ret, mload(0x00))
             }
 
-            // Constants
-            let q := 21888242871839275222246405745257275088696311157297823662689037894645226208583
-            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617
+            // Modulus
+            let q := 21888242871839275222246405745257275088696311157297823662689037894645226208583 // BN254 base field
+            let r := 21888242871839275222246405745257275088548364400416034343698204186575808495617 // BN254 scalar field
 
             // Initialize success as true
             let success := true
@@ -224,9 +242,10 @@ contract Halo2Verifier {
                 let num_instances := mload(NUM_INSTANCES_MPTR)
                 success := and(success, eq(num_instances, calldataload(NUM_INSTANCE_CPTR)))
 
-                // Read instances and witness commitments and generate challenges
+                // Absorb vk diegst
                 mstore(0x00, mload(VK_DIGEST_MPTR))
 
+                // Read instances and witness commitments and generate challenges
                 let hash_mptr := 0x20
                 let instance_cptr := INSTANCE_CPTR
                 for
@@ -278,7 +297,7 @@ contract Halo2Verifier {
                     hash_mptr := add(hash_mptr, 0x20)
                 }
 
-                // Read batch opening proof
+                // Read batch opening proof and generate challenges
                 {%- match scheme %}
                 {%- when Bdfg21 %}
                 challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // zeta
@@ -334,11 +353,11 @@ contract Halo2Verifier {
             }
 
             // Revert earlier if anything from calldata is invalid
-            if eq(success, 0) {
+            if iszero(success) {
                 revert(0, 0)
             }
 
-            // Compute lagrange evaluations and instance column evaluations
+            // Compute lagrange evaluations and instance evaluation
             {
                 let k := mload(K_MPTR)
                 let x := mload(X_MPTR)
@@ -499,8 +518,13 @@ contract Halo2Verifier {
                 mload(PAIRING_RHS_Y_MPTR)
             )
 
-            // Return 1 if everything succeeds
-            mstore(0x00, success)
+            // Revert if anything fails, 
+            if iszero(success) {
+                revert(0x00, 0x00)
+            }
+
+            // Return 1 as result if everything succeeds
+            mstore(0x00, 1)
             return(0x00, 0x20)
         }
     }

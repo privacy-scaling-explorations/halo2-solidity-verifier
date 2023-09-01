@@ -2,7 +2,7 @@ use crate::{
     codegen::{
         evaluator::Evaluator,
         pcs::{
-            queries, rotation_sets, shplonk_computations,
+            bdfg21_computations, queries, rotation_sets,
             BatchOpenScheme::{Bdfg21, Gwc19},
         },
         template::{Halo2Verifier, Halo2VerifyingKey},
@@ -227,7 +227,7 @@ where
         .collect();
 
         let pcs_computations = match self.scheme {
-            Bdfg21 => shplonk_computations(&self.meta, &data),
+            Bdfg21 => bdfg21_computations(&self.meta, &data),
             Gwc19 => unimplemented!(),
         };
 
