@@ -580,14 +580,14 @@ pub(crate) fn code_block<const N: usize, const SHRINK: bool>(
 
 pub(crate) fn for_loop(
     initialization: impl IntoIterator<Item = String>,
-    cnodition: impl Into<String>,
+    condition: impl Into<String>,
     advancement: impl IntoIterator<Item = String>,
     body: impl IntoIterator<Item = String>,
 ) -> Vec<String> {
     chain![
         ["for".to_string()],
         code_block::<2, true>(initialization),
-        indent::<1>([cnodition.into()]),
+        indent::<1>([condition.into()]),
         code_block::<2, true>(advancement),
         code_block::<1, false>(body),
     ]

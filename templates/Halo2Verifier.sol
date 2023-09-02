@@ -518,7 +518,7 @@ contract Halo2Verifier {
                 mload(PAIRING_RHS_Y_MPTR)
             )
 
-            // Revert if anything fails, 
+            // Revert if anything fails
             if iszero(success) {
                 revert(0x00, 0x00)
             }

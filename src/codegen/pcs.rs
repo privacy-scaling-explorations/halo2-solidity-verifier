@@ -352,7 +352,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
         let is_single_rot_set = set.rots().len() == 1;
         chain![
             is_single_rot_set.then(|| format!("let coeff := mload({})", coeff_mptrs[0])),
-            ["let zeta := mload(ZETA_MPTR)", "let r_eval := 0",].map(str::to_string),
+            ["let zeta := mload(ZETA_MPTR)", "let r_eval := 0"].map(str::to_string),
             if is_single_rot_set {
                 let eval_groups = set.evals().iter().rev().fold(
                     Vec::<Vec<&U256Expr>>::new(),

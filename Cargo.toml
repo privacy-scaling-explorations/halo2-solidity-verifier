@@ -5,14 +5,14 @@ edition = "2021"
 
 [dependencies]
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20" }
-rand = "0.8.5"
+askama = { version = "0.12.0", features = ["config"], default-features = false }
+hex = "0.4.3"
+ruint = "1.10.1"
 sha3 = "0.10"
 itertools = "0.11.0"
-ruint = "1.10.1"
-hex = "0.4.3"
-askama = { version = "0.12.0", features = ["config"], default-features = false }
 
 [dev-dependencies]
+rand = "0.8.5"
 revm = "3.3.0"
 halo2_maingate = { git = "https://github.com/privacy-scaling-explorations/halo2wrong", tag = "v2023_04_20", package = "maingate" }
 

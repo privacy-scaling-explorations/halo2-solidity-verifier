@@ -158,7 +158,7 @@ where
                 .acc_encoding
                 .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
                 .unwrap_or_default();
-            chain![[
+            vec![
                 ("vk_digest", vk_digest),
                 ("k", k),
                 ("n_inv", n_inv),
@@ -180,8 +180,7 @@ where
                 ("neg_s_g2_x_2", self.neg_s_g2[1]),
                 ("neg_s_g2_y_1", self.neg_s_g2[2]),
                 ("neg_s_g2_y_2", self.neg_s_g2[3]),
-            ],]
-            .collect()
+            ]
         };
         let fixed_comms = chain![self.vk.fixed_commitments()]
             .flat_map(g1_to_u256::<C>)
