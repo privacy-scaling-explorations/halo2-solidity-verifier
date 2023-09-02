@@ -44,7 +44,7 @@ fn render_separately_maingate() {
     run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>()
 }
 
-fn run_render<T: halo2::TestCircuit<Fr>>() {
+fn run_render<C: halo2::TestCircuit<Fr>>() {
     let acc_encoding = AccumulatorEncoding {
         offset: 0,
         num_limbs: 4,
@@ -52,14 +52,14 @@ fn run_render<T: halo2::TestCircuit<Fr>>() {
     }
     .into();
     let (param, vk, instances, proof) =
-        halo2::create_testdata_bdfg21::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
 
     let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let verifier_solidity = generator.render().unwrap();
     let verifier_bytecode = ethereum::compile_solidity(verifier_solidity);
     let verifier_deployment_codesize = verifier_bytecode.len();
 
-    let mut evm = ethereum::Evm::new();
+    let mut evm = ethereum::Evm::default();
     let verifier_address = evm.create(verifier_bytecode);
     let verifier_runtime_codesize = evm.codesize(verifier_address);
 
@@ -74,7 +74,7 @@ fn run_render<T: halo2::TestCircuit<Fr>>() {
     println!("Gas cost: {gas_cost}");
 }
 
-fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
+fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
     let acc_encoding = AccumulatorEncoding {
         offset: 0,
         num_limbs: 4,
@@ -82,14 +82,14 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
     }
     .into();
     let (param, vk, instances, _) =
-        halo2::create_testdata_bdfg21::<Bn256, T>(T::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
 
     let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
     let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
     let verifier_bytecode = ethereum::compile_solidity(&verifier_solidity);
     let verifier_deployment_codesize = verifier_bytecode.len();
 
-    let mut evm = ethereum::Evm::new();
+    let mut evm = ethereum::Evm::default();
     let verifier_address = evm.create(verifier_bytecode);
     let verifier_runtime_codesize = evm.codesize(verifier_address);
 
@@ -98,9 +98,9 @@ fn run_render_separately<T: halo2::TestCircuit<Fr>>() {
 
     let deployed_verifier_solidity = verifier_solidity;
 
-    for k in T::min_k()..T::min_k() + 4 {
+    for k in C::min_k()..C::min_k() + 4 {
         let (param, vk, instances, proof) =
-            halo2::create_testdata_bdfg21::<Bn256, T>(k, acc_encoding, std_rng());
+            halo2::create_testdata_bdfg21::<C>(k, acc_encoding, std_rng());
         let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
 
         let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
@@ -186,8 +186,8 @@ mod ethereum {
         evm: EVM<InMemoryDB>,
     }
 
-    impl Evm {
-        pub fn new() -> Self {
+    impl Default for Evm {
+        fn default() -> Self {
             Self {
                 evm: EVM {
                     env: Default::default(),
@@ -195,7 +195,9 @@ mod ethereum {
                 },
             }
         }
+    }
 
+    impl Evm {
         pub fn codesize(&mut self, address: Address) -> usize {
             self.evm.db.as_ref().unwrap().accounts[&address]
                 .info
@@ -269,10 +271,10 @@ mod halo2 {
     use halo2_proofs::{
         arithmetic::CurveAffine,
         halo2curves::{
-            ff::{Field, FromUniformBytes, PrimeField, WithSmallOrderMulGroup},
+            bn256,
+            ff::{Field, PrimeField},
             group::{prime::PrimeCurveAffine, Curve, Group},
             pairing::{MillerLoopResult, MultiMillerLoop},
-            serde::SerdeObject,
         },
         plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, VerifyingKey},
         poly::kzg::{
@@ -285,7 +287,7 @@ mod halo2 {
     use itertools::Itertools;
     use rand::RngCore;
     use ruint::aliases::U256;
-    use std::{borrow::Borrow, fmt::Debug};
+    use std::borrow::Borrow;
 
     pub trait TestCircuit<F: Field>: Circuit<F> {
         fn min_k() -> u32;
@@ -296,35 +298,26 @@ mod halo2 {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn create_testdata_bdfg21<M, C>(
+    pub fn create_testdata_bdfg21<C: TestCircuit<bn256::Fr>>(
         k: u32,
         acc_encoding: Option<AccumulatorEncoding>,
         mut rng: impl RngCore + Clone,
     ) -> (
-        ParamsKZG<M>,
-        VerifyingKey<M::G1Affine>,
-        Vec<M::Scalar>,
+        ParamsKZG<bn256::Bn256>,
+        VerifyingKey<bn256::G1Affine>,
+        Vec<bn256::Fr>,
         Vec<u8>,
-    )
-    where
-        M: Debug + MultiMillerLoop,
-        <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-        M::Scalar:
-            Ord + FromUniformBytes<64, Repr = [u8; 0x20]> + WithSmallOrderMulGroup<3> + SerdeObject,
-        M::G1Affine: SerdeObject,
-        M::G2Affine: SerdeObject,
-        C: TestCircuit<M::Scalar>,
-    {
+    ) {
         let circuit = C::new(acc_encoding, rng.clone());
         let instnaces = circuit.instances();
 
-        let param = ParamsKZG::<M>::setup(k, &mut rng);
+        let param = ParamsKZG::<bn256::Bn256>::setup(k, &mut rng);
         let vk = keygen_vk(&param, &circuit).unwrap();
         let pk = keygen_pk(&param, vk.clone(), &circuit).unwrap();
 
         let proof = {
             let mut transcript = Keccak256Transcript::new(Vec::new());
-            create_proof::<_, ProverSHPLONK<M>, _, _, _, _>(
+            create_proof::<_, ProverSHPLONK<_>, _, _, _, _>(
                 &param,
                 &pk,
                 &[circuit],
@@ -338,7 +331,7 @@ mod halo2 {
 
         let result = {
             let mut transcript = Keccak256Transcript::new(proof.as_slice());
-            verify_proof::<_, VerifierSHPLONK<M>, _, _, SingleStrategy<_>>(
+            verify_proof::<_, VerifierSHPLONK<_>, _, _, SingleStrategy<_>>(
                 &param,
                 pk.get_vk(),
                 SingleStrategy::new(&param),

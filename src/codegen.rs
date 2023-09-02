@@ -8,11 +8,11 @@ use crate::{
         template::{Halo2Verifier, Halo2VerifyingKey},
         util::{ConstraintSystemMeta, Data, Ptr},
     },
-    fe_to_u256, g1_to_u256, g2_to_u256,
+    fe_to_u256, g1_to_u256s, g2_to_u256s,
 };
 use halo2_proofs::{
     arithmetic::Field,
-    halo2curves::{ff::PrimeField, pairing::MultiMillerLoop, serde::SerdeObject, CurveAffine},
+    halo2curves::bn256,
     plonk::VerifyingKey,
     poly::{commitment::ParamsProver, kzg::commitment::ParamsKZG, Rotation},
 };
@@ -28,15 +28,13 @@ mod util;
 pub use pcs::BatchOpenScheme;
 
 #[derive(Debug)]
-pub struct SolidityGenerator<'a, C: CurveAffine> {
-    vk: &'a VerifyingKey<C>,
+pub struct SolidityGenerator<'a> {
+    params: &'a ParamsKZG<bn256::Bn256>,
+    vk: &'a VerifyingKey<bn256::G1Affine>,
     meta: ConstraintSystemMeta,
     num_instances: usize,
     acc_encoding: Option<AccumulatorEncoding>,
     scheme: BatchOpenScheme,
-    g1: [U256; 2],
-    g2: [U256; 4],
-    neg_s_g2: [U256; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -46,21 +44,14 @@ pub struct AccumulatorEncoding {
     pub num_limb_bits: usize,
 }
 
-impl<'a, C: CurveAffine> SolidityGenerator<'a, C> {
-    pub fn new<M: MultiMillerLoop<G1Affine = C>>(
-        param: &ParamsKZG<M>,
-        vk: &'a VerifyingKey<C>,
+impl<'a> SolidityGenerator<'a> {
+    pub fn new(
+        params: &'a ParamsKZG<bn256::Bn256>,
+        vk: &'a VerifyingKey<bn256::G1Affine>,
         num_instances: usize,
         acc_encoding: Option<AccumulatorEncoding>,
         scheme: BatchOpenScheme,
-    ) -> Self
-    where
-        C::Base: PrimeField<Repr = [u8; 0x20]>,
-        M: Debug,
-        M::Scalar: PrimeField,
-        M::G1Affine: SerdeObject,
-        M::G2Affine: SerdeObject,
-    {
+    ) -> Self {
         assert_ne!(vk.cs().num_advice_columns(), 0);
         assert_eq!(
             vk.cs().num_instance_columns(),
@@ -80,31 +71,18 @@ impl<'a, C: CurveAffine> SolidityGenerator<'a, C> {
             "BatchOpenScheme::Gwc19 is not yet implemented"
         );
 
-        let meta = ConstraintSystemMeta::new(vk.cs());
-
-        let g1 = param.get_g()[0];
-        let g1 = g1_to_u256(g1);
-        let g2 = g2_to_u256(param.g2());
-        let neg_s_g2 = g2_to_u256(-param.s_g2());
-
         Self {
+            params,
             vk,
-            meta,
+            meta: ConstraintSystemMeta::new(vk.cs()),
             num_instances,
             acc_encoding,
             scheme,
-            g1,
-            g2,
-            neg_s_g2,
         }
     }
 }
 
-impl<'a, C: CurveAffine> SolidityGenerator<'a, C>
-where
-    C::Base: PrimeField<Repr = [u8; 0x20]>,
-    C::Scalar: PrimeField<Repr = [u8; 0x20]>,
-{
+impl<'a> SolidityGenerator<'a> {
     pub fn render_into(&self, verifier_writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
         self.generate_verifier(false).render(verifier_writer)
     }
@@ -137,7 +115,7 @@ where
             let domain = self.vk.get_domain();
             let vk_digest = fe_to_u256(self.vk.transcript_repr());
             let k = U256::from(domain.k());
-            let n_inv = fe_to_u256(C::Scalar::from(1 << domain.k()).invert().unwrap());
+            let n_inv = fe_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
             let omega = fe_to_u256(domain.get_omega());
             let omega_inv = fe_to_u256(domain.get_omega_inv());
             let omega_inv_to_l = {
@@ -158,6 +136,10 @@ where
                 .acc_encoding
                 .map(|acc_encoding| U256::from(acc_encoding.num_limb_bits))
                 .unwrap_or_default();
+            let g1 = self.params.get_g()[0];
+            let g1 = g1_to_u256s(g1);
+            let g2 = g2_to_u256s(self.params.g2());
+            let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
             vec![
                 ("vk_digest", vk_digest),
                 ("k", k),
@@ -170,24 +152,24 @@ where
                 ("acc_offset", acc_offset),
                 ("num_acc_limbs", num_acc_limbs),
                 ("num_acc_limb_bits", num_acc_limb_bits),
-                ("g1_x", self.g1[0]),
-                ("g1_y", self.g1[1]),
-                ("g2_x_1", self.g2[0]),
-                ("g2_x_2", self.g2[1]),
-                ("g2_y_1", self.g2[2]),
-                ("g2_y_2", self.g2[3]),
-                ("neg_s_g2_x_1", self.neg_s_g2[0]),
-                ("neg_s_g2_x_2", self.neg_s_g2[1]),
-                ("neg_s_g2_y_1", self.neg_s_g2[2]),
-                ("neg_s_g2_y_2", self.neg_s_g2[3]),
+                ("g1_x", g1[0]),
+                ("g1_y", g1[1]),
+                ("g2_x_1", g2[0]),
+                ("g2_x_2", g2[1]),
+                ("g2_y_1", g2[2]),
+                ("g2_y_2", g2[3]),
+                ("neg_s_g2_x_1", neg_s_g2[0]),
+                ("neg_s_g2_x_2", neg_s_g2[1]),
+                ("neg_s_g2_y_1", neg_s_g2[2]),
+                ("neg_s_g2_y_2", neg_s_g2[3]),
             ]
         };
         let fixed_comms = chain![self.vk.fixed_commitments()]
-            .flat_map(g1_to_u256::<C>)
+            .flat_map(g1_to_u256s)
             .tuples()
             .collect();
         let permutation_comms = chain![self.vk.permutation().commitments()]
-            .flat_map(g1_to_u256::<C>)
+            .flat_map(g1_to_u256s)
             .tuples()
             .collect();
         Halo2VerifyingKey {

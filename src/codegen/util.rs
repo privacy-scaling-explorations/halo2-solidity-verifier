@@ -34,7 +34,7 @@ pub(crate) struct ConstraintSystemMeta {
 }
 
 impl ConstraintSystemMeta {
-    pub(crate) fn new<F: PrimeField>(cs: &ConstraintSystem<F>) -> Self {
+    pub(crate) fn new(cs: &ConstraintSystem<impl PrimeField>) -> Self {
         let num_fixeds = cs.num_fixed_columns();
         let permutation_columns = cs.permutation().get_columns();
         let permutation_chunk_len = cs.degree() - 2;
