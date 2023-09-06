@@ -180,11 +180,11 @@ impl<'a> SolidityGenerator<'a> {
     }
 
     fn generate_verifier(&self, separate: bool) -> Halo2Verifier {
-        let proof_cptr = Ptr::from(if separate { 0x84 } else { 0x64 });
+        let proof_cptr = Ptr::calldata(if separate { 0x84 } else { 0x64 });
 
         let vk = self.generate_vk();
         let vk_len = vk.len();
-        let vk_mptr = Ptr::from(self.estimate_working_memory_size(&vk, proof_cptr));
+        let vk_mptr = Ptr::memory(self.estimate_working_memory_size(&vk, proof_cptr));
         let data = Data::new(&self.meta, self.scheme, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
@@ -236,7 +236,7 @@ impl<'a> SolidityGenerator<'a> {
     fn estimate_working_memory_size(&self, vk: &Halo2VerifyingKey, proof_cptr: Ptr) -> usize {
         match self.scheme {
             Bdfg21 => {
-                let mock_vk_mptr = Ptr::from(0x100000);
+                let mock_vk_mptr = Ptr::memory(0x100000);
                 let mock = Data::new(&self.meta, self.scheme, vk, mock_vk_mptr, proof_cptr);
                 let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
                 let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();

@@ -5,7 +5,7 @@ use halo2_proofs::{
         TranscriptWriterBuffer,
     },
 };
-use itertools::Itertools;
+use itertools::{chain, Itertools};
 use ruint::aliases::U256;
 use sha3::{Digest, Keccak256};
 use std::{
@@ -60,10 +60,11 @@ where
 {
     fn squeeze_challenge(&mut self) -> ChallengeEvm<C> {
         let buf_len = self.buf.len();
-        let data = mem::take(&mut self.buf)
-            .into_iter()
-            .chain(if buf_len == 0x20 { Some(1) } else { None })
-            .collect_vec();
+        let data = chain![
+            mem::take(&mut self.buf),
+            if buf_len == 0x20 { Some(1) } else { None }
+        ]
+        .collect_vec();
         let hash: [u8; 0x20] = Keccak256::digest(data).into();
         self.buf = hash.to_vec();
         ChallengeEvm::new(&hash)
