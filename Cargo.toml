@@ -11,6 +11,9 @@ ruint = "1.10.1"
 sha3 = "0.10"
 itertools = "0.11.0"
 
+# evm
+revm = { version = "3.3.0", optional = true }
+
 [dev-dependencies]
 rand = "0.8.5"
 revm = "3.3.0"
@@ -18,3 +21,11 @@ halo2_maingate = { git = "https://github.com/privacy-scaling-explorations/halo2w
 
 [patch."https://github.com/privacy-scaling-explorations/halo2.git"]
 halo2_proofs = { git = "https://github.com/han0110/halo2", branch = "tmp/expose-transcript-repr-for-0420" }
+
+[features]
+default = []
+evm = ["dep:revm"]
+
+[[example]]
+name = "separately"
+required-features = ["evm"]

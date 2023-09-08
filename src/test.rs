@@ -1,10 +1,11 @@
 use crate::{
     codegen::{AccumulatorEncoding, BatchOpenScheme::Bdfg21, SolidityGenerator},
-    encode_calldata, FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
+    encode_calldata,
+    evm::test::{compile_solidity, Evm},
+    FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
 };
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
-use ruint::aliases::U256;
 use sha3::Digest;
 use std::{fs::File, io::Write};
 
@@ -45,78 +46,65 @@ fn render_separately_maingate() {
 }
 
 fn run_render<C: halo2::TestCircuit<Fr>>() {
-    let acc_encoding = AccumulatorEncoding {
-        offset: 0,
-        num_limbs: 4,
-        num_limb_bits: 68,
-    }
-    .into();
-    let (param, vk, instances, proof) =
+    let acc_encoding = AccumulatorEncoding::new(0, 4, 68).into();
+    let (params, vk, instances, proof) =
         halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
+    let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+        .set_acc_encoding(acc_encoding);
     let verifier_solidity = generator.render().unwrap();
-    let verifier_bytecode = ethereum::compile_solidity(verifier_solidity);
-    let verifier_deployment_codesize = verifier_bytecode.len();
+    let verifier_creation_code = compile_solidity(verifier_solidity);
+    let verifier_creation_code_size = verifier_creation_code.len();
 
-    let mut evm = ethereum::Evm::default();
-    let verifier_address = evm.create(verifier_bytecode);
-    let verifier_runtime_codesize = evm.codesize(verifier_address);
+    let mut evm = Evm::default();
+    let verifier_address = evm.create(verifier_creation_code);
+    let verifier_runtime_code_size = evm.code_size(verifier_address);
 
-    println!("Verifier deployment code size: {verifier_deployment_codesize}");
-    println!("Verifier runtime code size: {verifier_runtime_codesize}");
+    println!("Verifier creation code size: {verifier_creation_code_size}");
+    println!("Verifier runtime code size: {verifier_runtime_code_size}");
 
     let (gas_cost, output) = evm.call(verifier_address, encode_calldata(None, &proof, &instances));
-    assert_eq!(
-        U256::from_be_bytes::<0x20>(output.try_into().unwrap()),
-        U256::from(1)
-    );
+    assert_eq!(output, [vec![0; 31], vec![1]].concat());
     println!("Gas cost: {gas_cost}");
 }
 
 fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
-    let acc_encoding = AccumulatorEncoding {
-        offset: 0,
-        num_limbs: 4,
-        num_limb_bits: 68,
-    }
-    .into();
-    let (param, vk, instances, _) =
+    let acc_encoding = AccumulatorEncoding::new(0, 4, 68).into();
+    let (params, vk, instances, _) =
         halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
+    let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+        .set_acc_encoding(acc_encoding);
     let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
-    let verifier_bytecode = ethereum::compile_solidity(&verifier_solidity);
-    let verifier_deployment_codesize = verifier_bytecode.len();
+    let verifier_creation_code = compile_solidity(&verifier_solidity);
+    let verifier_creation_code_size = verifier_creation_code.len();
 
-    let mut evm = ethereum::Evm::default();
-    let verifier_address = evm.create(verifier_bytecode);
-    let verifier_runtime_codesize = evm.codesize(verifier_address);
+    let mut evm = Evm::default();
+    let verifier_address = evm.create(verifier_creation_code);
+    let verifier_runtime_code_size = evm.code_size(verifier_address);
 
-    println!("Verifier deployment code size: {verifier_deployment_codesize}");
-    println!("Verifier runtime code size: {verifier_runtime_codesize}");
+    println!("Verifier creation code size: {verifier_creation_code_size}");
+    println!("Verifier runtime code size: {verifier_runtime_code_size}");
 
     let deployed_verifier_solidity = verifier_solidity;
 
     for k in C::min_k()..C::min_k() + 4 {
-        let (param, vk, instances, proof) =
+        let (params, vk, instances, proof) =
             halo2::create_testdata_bdfg21::<C>(k, acc_encoding, std_rng());
-        let generator = SolidityGenerator::new(&param, &vk, instances.len(), acc_encoding, Bdfg21);
+        let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+            .set_acc_encoding(acc_encoding);
 
         let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
         assert_eq!(deployed_verifier_solidity, verifier_solidity);
 
-        let vk_bytecode = ethereum::compile_solidity(&vk_solidity);
-        let vk_address = evm.create(vk_bytecode);
+        let vk_creation_code = compile_solidity(&vk_solidity);
+        let vk_address = evm.create(vk_creation_code);
 
         let (gas_cost, output) = evm.call(
             verifier_address,
             encode_calldata(vk_address.0.into(), &proof, &instances),
         );
-        assert_eq!(
-            U256::from_be_bytes::<0x20>(output.try_into().unwrap()),
-            U256::from(1)
-        );
+        assert_eq!(output, [vec![0; 31], vec![1]].concat());
         println!("Gas cost: {gas_cost}");
     }
 }
@@ -139,130 +127,6 @@ fn save_generated(verifier: &str, vk: Option<&str>) {
             .unwrap()
             .write_all(vk.as_bytes())
             .unwrap();
-    }
-}
-
-mod ethereum {
-    use revm::{
-        primitives::{Address, CreateScheme, ExecutionResult, Output, TransactTo, TxEnv},
-        InMemoryDB, EVM,
-    };
-    use std::{
-        io::Write,
-        process::{Command, Stdio},
-        str,
-    };
-
-    pub fn compile_solidity(solidity: impl AsRef<[u8]>) -> Vec<u8> {
-        let mut cmd = Command::new("solc")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .arg("--bin")
-            .arg("--via-ir")
-            .arg("-")
-            .spawn()
-            .unwrap();
-        cmd.stdin
-            .take()
-            .unwrap()
-            .write_all(solidity.as_ref())
-            .unwrap();
-        let output = cmd.wait_with_output().unwrap();
-        let stdout = str::from_utf8(&output.stdout).unwrap();
-        if let Some(binary) = find_binary(stdout) {
-            binary
-        } else {
-            panic!("{}", str::from_utf8(&output.stderr).unwrap());
-        }
-    }
-
-    fn find_binary(stdout: &str) -> Option<Vec<u8>> {
-        let start = stdout.find("Binary:")? + 8;
-        Some(hex::decode(&stdout[start..stdout.len() - 1]).unwrap())
-    }
-
-    pub struct Evm {
-        evm: EVM<InMemoryDB>,
-    }
-
-    impl Default for Evm {
-        fn default() -> Self {
-            Self {
-                evm: EVM {
-                    env: Default::default(),
-                    db: Some(Default::default()),
-                },
-            }
-        }
-    }
-
-    impl Evm {
-        pub fn codesize(&mut self, address: Address) -> usize {
-            self.evm.db.as_ref().unwrap().accounts[&address]
-                .info
-                .code
-                .as_ref()
-                .unwrap()
-                .len()
-        }
-
-        pub fn create(&mut self, bytecode: Vec<u8>) -> Address {
-            let (_, output) = self.transact_success_or_panic(TxEnv {
-                gas_limit: u64::MAX,
-                transact_to: TransactTo::Create(CreateScheme::Create),
-                data: bytecode.into(),
-                ..Default::default()
-            });
-            match output {
-                Output::Create(_, Some(address)) => address,
-                _ => unreachable!(),
-            }
-        }
-
-        pub fn call(&mut self, address: Address, calldata: Vec<u8>) -> (u64, Vec<u8>) {
-            let (gas_used, output) = self.transact_success_or_panic(TxEnv {
-                gas_limit: u64::MAX,
-                transact_to: TransactTo::Call(address),
-                data: calldata.into(),
-                ..Default::default()
-            });
-            match output {
-                Output::Call(output) => (gas_used, output.into()),
-                _ => unreachable!(),
-            }
-        }
-
-        fn transact_success_or_panic(&mut self, tx: TxEnv) -> (u64, Output) {
-            self.evm.env.tx = tx;
-            let result = self.evm.transact_commit().unwrap();
-            self.evm.env.tx = Default::default();
-            match result {
-                ExecutionResult::Success {
-                    gas_used,
-                    output,
-                    logs,
-                    ..
-                } => {
-                    if !logs.is_empty() {
-                        println!("--- logs from {} ---", logs[0].address);
-                        for log in logs {
-                            println!("topic1: {:?}", log.topics[0]);
-                        }
-                        println!("--- end ---");
-                    }
-                    (gas_used, output)
-                }
-                ExecutionResult::Revert { gas_used, output } => panic!(
-                    "Transaction reverts with gas_used {gas_used} and output {:#x}",
-                    output
-                ),
-                ExecutionResult::Halt { reason, gas_used } => panic!(
-                    "Transaction halts unexpectedly with gas_used {gas_used} and reason {:?}",
-                    reason
-                ),
-            }
-        }
     }
 }
 
@@ -309,19 +173,19 @@ mod halo2 {
         Vec<u8>,
     ) {
         let circuit = C::new(acc_encoding, rng.clone());
-        let instnaces = circuit.instances();
+        let instances = circuit.instances();
 
-        let param = ParamsKZG::<bn256::Bn256>::setup(k, &mut rng);
-        let vk = keygen_vk(&param, &circuit).unwrap();
-        let pk = keygen_pk(&param, vk.clone(), &circuit).unwrap();
+        let params = ParamsKZG::<bn256::Bn256>::setup(k, &mut rng);
+        let vk = keygen_vk(&params, &circuit).unwrap();
+        let pk = keygen_pk(&params, vk.clone(), &circuit).unwrap();
 
         let proof = {
             let mut transcript = Keccak256Transcript::new(Vec::new());
             create_proof::<_, ProverSHPLONK<_>, _, _, _, _>(
-                &param,
+                &params,
                 &pk,
                 &[circuit],
-                &[&[&instnaces]],
+                &[&[&instances]],
                 &mut rng,
                 &mut transcript,
             )
@@ -332,16 +196,16 @@ mod halo2 {
         let result = {
             let mut transcript = Keccak256Transcript::new(proof.as_slice());
             verify_proof::<_, VerifierSHPLONK<_>, _, _, SingleStrategy<_>>(
-                &param,
+                &params,
                 pk.get_vk(),
-                SingleStrategy::new(&param),
-                &[&[&instnaces]],
+                SingleStrategy::new(&params),
+                &[&[&instances]],
                 &mut transcript,
             )
         };
         assert!(result.is_ok());
 
-        (param, vk, instnaces, proof)
+        (params, vk, instances, proof)
     }
 
     fn random_accumulator_limbs<M>(

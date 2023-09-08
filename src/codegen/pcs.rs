@@ -4,9 +4,18 @@ use crate::codegen::util::{for_loop, ConstraintSystemMeta, Data, EcPoint, Locati
 use itertools::{chain, izip, Itertools};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// KZG batch open schemes in `halo2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchOpenScheme {
+    /// Batch open scheme in [Plonk] paper.
+    /// Corresponding to `halo2_proofs::poly::kzg::multiopen::ProverGWC`
+    ///
+    /// [Plonk]: https://eprint.iacr.org/2019/953.pdf
     Gwc19,
+    /// Batch open scheme in [BDFG21] paper.
+    /// Corresponding to `halo2_proofs::poly::kzg::multiopen::ProverSHPLONK`
+    ///
+    /// [BDFG21]: https://eprint.iacr.org/2020/081.pdf
     Bdfg21,
 }
 
@@ -184,7 +193,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
     let points = izip!(&superset, Word::range(point_mptr)).collect::<BTreeMap<_, _>>();
     let mu_minus_points =
         izip!(&superset, Word::range(mu_minus_point_mptr)).collect::<BTreeMap<_, _>>();
-    let vanishing_0 = Word::from(free_mptr + 2 * superset.len());
+    let vanishing_0 = Word::from(vanishing_0_mptr);
     let diffs = Word::range(diff_mptr).take(sets.len()).collect_vec();
     let r_evals = Word::range(r_eval_mptr).take(sets.len()).collect_vec();
     let sums = Word::range(sum_mptr).take(sets.len()).collect_vec();
@@ -256,10 +265,10 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
         ["let diff".to_string()],
         izip!(0.., &sets, &diffs).flat_map(|(set_idx, set, diff)| {
             chain![
-                [format!(
-                    "diff := {}",
-                    mu_minus_points[set.diffs().first().unwrap()]
-                )],
+                [set.diffs()
+                    .first()
+                    .map(|rot| format!("diff := {}", mu_minus_points[rot]))
+                    .unwrap_or_else(|| "diff := 1".to_string())],
                 chain![set.diffs().iter().skip(1)]
                     .map(|rot| { format!("diff := mulmod(diff, {}, r)", mu_minus_points[rot]) }),
                 [format!("mstore({}, diff)", diff.ptr())],
@@ -315,7 +324,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
 
     let normalized_coeff_computations = chain![
         [
-            format!("success := batch_invert(success, {first_batch_invert_end}, r)"),
+            format!("success := batch_invert(success, 0, {first_batch_invert_end}, r)"),
             format!("let diff_0_inv := {diff_0}"),
             format!("mstore({}, diff_0_inv)", diffs[0].ptr()),
         ],
@@ -432,7 +441,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
             ["mstore(mptr, mload(sum_mptr))".to_string()],
         ),
         [
-            format!("success := batch_invert(success, {second_batch_invert_end}, r)"),
+            format!("success := batch_invert(success, 0, {second_batch_invert_end}, r)"),
             format!(
                 "let r_eval := mulmod(mload({}), {}, r)",
                 second_batch_invert_end - 1,

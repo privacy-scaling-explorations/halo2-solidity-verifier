@@ -3,11 +3,13 @@ use crate::codegen::{
     BatchOpenScheme::{self, Bdfg21, Gwc19},
 };
 use halo2_proofs::{
-    halo2curves::ff::PrimeField,
+    halo2curves::{bn256, ff::PrimeField, CurveAffine},
     plonk::{Any, Column, ConstraintSystem},
 };
 use itertools::{chain, izip, Itertools};
+use ruint::aliases::U256;
 use std::{
+    borrow::Borrow,
     collections::HashMap,
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
@@ -109,8 +111,8 @@ impl ConstraintSystemMeta {
     pub(crate) fn num_advices(&self) -> Vec<usize> {
         chain![
             self.num_user_advices.iter().cloned(),
+            (self.num_lookup_permuteds != 0).then_some(self.num_lookup_permuteds), // lookup permuted
             [
-                self.num_lookup_permuteds,                        // lookup permuted
                 self.num_permutation_zs + self.num_lookup_zs + 1, // permutation and lookup grand products, random
                 self.num_quotients,                               // quotients
             ],
@@ -120,12 +122,20 @@ impl ConstraintSystemMeta {
 
     pub(crate) fn num_challenges(&self) -> Vec<usize> {
         let mut num_challenges = self.num_user_challenges.clone();
-        *num_challenges.last_mut().unwrap() += 1; // theta
-        num_challenges.extend([
-            2, // beta, gamma
-            1, // y
-            1, // x
-        ]);
+        if self.num_lookup_permuteds == 0 {
+            *num_challenges.last_mut().unwrap() += 3; // theta, beta, gamma
+            num_challenges.extend([
+                1, // y
+                1, // x
+            ]);
+        } else {
+            *num_challenges.last_mut().unwrap() += 1; // theta
+            num_challenges.extend([
+                2, // beta, gamma
+                1, // y
+                1, // x
+            ]);
+        }
         num_challenges
     }
 
@@ -151,22 +161,12 @@ impl ConstraintSystemMeta {
             }
         }
     }
-
-    pub(crate) fn num_batch_open_challenges(&self, scheme: BatchOpenScheme) -> usize {
-        match scheme {
-            Bdfg21 => 3,
-            Gwc19 => {
-                unimplemented!()
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Data {
     pub(crate) challenge_mptr: Ptr,
     pub(crate) theta_mptr: Ptr,
-    pub(crate) instance_eval_mptr: Ptr,
 
     pub(crate) quotient_comm_cptr: Ptr,
     pub(crate) w_cptr: Ptr,
@@ -196,7 +196,6 @@ pub(crate) struct Data {
 impl Data {
     pub(crate) fn new(
         meta: &ConstraintSystemMeta,
-        scheme: BatchOpenScheme,
         vk: &Halo2VerifyingKey,
         vk_mptr: Ptr,
         proof_cptr: Ptr,
@@ -205,7 +204,6 @@ impl Data {
         let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
         let challenge_mptr = permutation_comm_mptr + 2 * vk.permutation_comms.len();
         let theta_mptr = challenge_mptr + meta.num_user_challenges.iter().sum::<usize>();
-        let instance_eval_mptr = theta_mptr + 5 + meta.num_batch_open_challenges(scheme);
 
         let advice_comm_start = proof_cptr;
         let lookup_permuted_comm_start = advice_comm_start + 2 * meta.advice_index.len();
@@ -289,7 +287,6 @@ impl Data {
         Self {
             challenge_mptr,
             theta_mptr,
-            instance_eval_mptr,
             quotient_comm_cptr: quotient_comm_start,
             w_cptr,
 
@@ -562,4 +559,28 @@ pub(crate) fn for_loop(
         code_block::<1, false>(body),
     ]
     .collect()
+}
+
+pub(crate) fn g1_to_u256s(ec_point: impl Borrow<bn256::G1Affine>) -> [U256; 2] {
+    let coords = ec_point.borrow().coordinates().unwrap();
+    [coords.x(), coords.y()].map(fe_to_u256::<bn256::Fq>)
+}
+
+pub(crate) fn g2_to_u256s(ec_point: impl Borrow<bn256::G2Affine>) -> [U256; 4] {
+    let coords = ec_point.borrow().coordinates().unwrap();
+    let x = coords.x().to_repr();
+    let y = coords.y().to_repr();
+    [
+        U256::try_from_le_slice(&x.as_ref()[0x20..]).unwrap(),
+        U256::try_from_le_slice(&x.as_ref()[..0x20]).unwrap(),
+        U256::try_from_le_slice(&y.as_ref()[0x20..]).unwrap(),
+        U256::try_from_le_slice(&y.as_ref()[..0x20]).unwrap(),
+    ]
+}
+
+pub(crate) fn fe_to_u256<F>(fe: impl Borrow<F>) -> U256
+where
+    F: PrimeField<Repr = [u8; 0x20]>,
+{
+    U256::from_le_bytes(fe.borrow().to_repr())
 }

@@ -14,6 +14,7 @@ use std::{
     mem,
 };
 
+/// Transcript using Keccak256 as hash function in Fiat-Shamir transformation.
 #[derive(Debug, Default)]
 pub struct Keccak256Transcript<C, S> {
     stream: S,
@@ -22,6 +23,7 @@ pub struct Keccak256Transcript<C, S> {
 }
 
 impl<C, S> Keccak256Transcript<C, S> {
+    /// Return a `Keccak256Transcript` with empty buffer.
     pub fn new(stream: S) -> Self {
         Self {
             stream,

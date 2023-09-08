@@ -1,13 +1,15 @@
-pragma solidity ^0.8.21;
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
 
 contract Halo2Verifier {
-    uint256 internal constant    PROOF_LEN_CPTR = {{ (proof_cptr - 1) }};
+    uint256 internal constant    PROOF_LEN_CPTR = {{ proof_cptr - 1 }};
     uint256 internal constant        PROOF_CPTR = {{ proof_cptr }};
-    uint256 internal constant NUM_INSTANCE_CPTR = {{ (proof_cptr + (proof_len / 32)) }};
-    uint256 internal constant     INSTANCE_CPTR = {{ (proof_cptr + (proof_len / 32) + 1) }};
+    uint256 internal constant NUM_INSTANCE_CPTR = {{ proof_cptr + (proof_len / 32) }};
+    uint256 internal constant     INSTANCE_CPTR = {{ proof_cptr + (proof_len / 32) + 1 }};
 
     uint256 internal constant FIRST_QUOTIENT_X_CPTR = {{ quotient_comm_cptr }};
-    uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ (quotient_comm_cptr + 2 * (num_quotients - 1)) }};
+    uint256 internal constant  LAST_QUOTIENT_X_CPTR = {{ quotient_comm_cptr + 2 * (num_quotients - 1) }};
 
     uint256 internal constant                VK_MPTR = {{ vk_mptr }};
     uint256 internal constant         VK_DIGEST_MPTR = {{ vk_mptr }};
@@ -39,28 +41,33 @@ contract Halo2Verifier {
     uint256 internal constant GAMMA_MPTR = {{ theta_mptr + 2 }};
     uint256 internal constant     Y_MPTR = {{ theta_mptr + 3 }};
     uint256 internal constant     X_MPTR = {{ theta_mptr + 4 }};
+    {%- match scheme %}
+    {%- when Bdfg21 %}
     uint256 internal constant  ZETA_MPTR = {{ theta_mptr + 5 }};
     uint256 internal constant    NU_MPTR = {{ theta_mptr + 6 }};
     uint256 internal constant    MU_MPTR = {{ theta_mptr + 7 }};
+    {%- when Gwc19 %}
+    // TODO
+    {%- endmatch %}
 
-    uint256 internal constant   INSTANCE_EVAL_MPTR = {{ instance_eval_mptr }};
-    uint256 internal constant             X_N_MPTR = {{ instance_eval_mptr + 1 }};
-    uint256 internal constant X_N_MINUS_1_INV_MPTR = {{ instance_eval_mptr + 2 }};
-    uint256 internal constant          L_LAST_MPTR = {{ instance_eval_mptr + 3 }};
-    uint256 internal constant         L_BLIND_MPTR = {{ instance_eval_mptr + 4 }};
-    uint256 internal constant             L_0_MPTR = {{ instance_eval_mptr + 5 }};
-    uint256 internal constant   QUOTIENT_EVAL_MPTR = {{ instance_eval_mptr + 6 }};
-    uint256 internal constant      QUOTIENT_X_MPTR = {{ instance_eval_mptr + 7 }};
-    uint256 internal constant      QUOTIENT_Y_MPTR = {{ instance_eval_mptr + 8 }};
-    uint256 internal constant          R_EVAL_MPTR = {{ instance_eval_mptr + 9 }};
-    uint256 internal constant   PAIRING_LHS_X_MPTR = {{ instance_eval_mptr + 10 }};
-    uint256 internal constant   PAIRING_LHS_Y_MPTR = {{ instance_eval_mptr + 11 }};
-    uint256 internal constant   PAIRING_RHS_X_MPTR = {{ instance_eval_mptr + 12 }};
-    uint256 internal constant   PAIRING_RHS_Y_MPTR = {{ instance_eval_mptr + 13 }};
-    uint256 internal constant       ACC_LHS_X_MPTR = {{ instance_eval_mptr + 14 }};
-    uint256 internal constant       ACC_LHS_Y_MPTR = {{ instance_eval_mptr + 15 }};
-    uint256 internal constant       ACC_RHS_X_MPTR = {{ instance_eval_mptr + 16 }};
-    uint256 internal constant       ACC_RHS_Y_MPTR = {{ instance_eval_mptr + 17 }};
+    uint256 internal constant       ACC_LHS_X_MPTR = {{ theta_mptr + 8 }};
+    uint256 internal constant       ACC_LHS_Y_MPTR = {{ theta_mptr + 9 }};
+    uint256 internal constant       ACC_RHS_X_MPTR = {{ theta_mptr + 10 }};
+    uint256 internal constant       ACC_RHS_Y_MPTR = {{ theta_mptr + 11 }};
+    uint256 internal constant             X_N_MPTR = {{ theta_mptr + 12 }};
+    uint256 internal constant X_N_MINUS_1_INV_MPTR = {{ theta_mptr + 13 }};
+    uint256 internal constant          L_LAST_MPTR = {{ theta_mptr + 14 }};
+    uint256 internal constant         L_BLIND_MPTR = {{ theta_mptr + 15 }};
+    uint256 internal constant             L_0_MPTR = {{ theta_mptr + 16 }};
+    uint256 internal constant   INSTANCE_EVAL_MPTR = {{ theta_mptr + 17 }};
+    uint256 internal constant   QUOTIENT_EVAL_MPTR = {{ theta_mptr + 18 }};
+    uint256 internal constant      QUOTIENT_X_MPTR = {{ theta_mptr + 19 }};
+    uint256 internal constant      QUOTIENT_Y_MPTR = {{ theta_mptr + 20 }};
+    uint256 internal constant          R_EVAL_MPTR = {{ theta_mptr + 21 }};
+    uint256 internal constant   PAIRING_LHS_X_MPTR = {{ theta_mptr + 22 }};
+    uint256 internal constant   PAIRING_LHS_Y_MPTR = {{ theta_mptr + 23 }};
+    uint256 internal constant   PAIRING_RHS_X_MPTR = {{ theta_mptr + 24 }};
+    uint256 internal constant   PAIRING_RHS_Y_MPTR = {{ theta_mptr + 25 }};
 
     function verifyProof(
         {%- match vk %}
@@ -113,12 +120,12 @@ contract Halo2Verifier {
                 ret := add(challenge_mptr, 0x20)
             }
 
-            // Batch invert values in memory[0..mptr_end] in place.
+            // Batch invert values in memory[mptr_start..mptr_end] in place.
             // Return updated (success).
-            function batch_invert(success, mptr_end, r) -> ret {
-                let mptr := 0x20
+            function batch_invert(success, mptr_start, mptr_end, r) -> ret {
                 let gp_mptr := mptr_end
-                let gp := mload(0x00)
+                let gp := mload(mptr_start)
+                let mptr := add(mptr_start, 0x20)
                 for
                     {}
                     lt(mptr, sub(mptr_end, 0x20))
@@ -140,10 +147,12 @@ contract Halo2Verifier {
                 ret := and(success, staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20))
                 let all_inv := mload(gp_mptr)
 
+                let first_mptr := mptr_start
+                let second_mptr := add(first_mptr, 0x20)
                 gp_mptr := sub(gp_mptr, 0x20)
                 for
                     {}
-                    lt(0x20, mptr)
+                    lt(second_mptr, mptr)
                     {}
                 {
                     let inv := mulmod(all_inv, mload(gp_mptr), r)
@@ -152,10 +161,10 @@ contract Halo2Verifier {
                     mptr := sub(mptr, 0x20)
                     gp_mptr := sub(gp_mptr, 0x20)
                 }
-                let inv_first := mulmod(all_inv, mload(0x20), r)
-                let inv_second := mulmod(all_inv, mload(0x00), r)
-                mstore(0x00, inv_first)
-                mstore(0x20, inv_second)
+                let inv_first := mulmod(all_inv, mload(second_mptr), r)
+                let inv_second := mulmod(all_inv, mload(first_mptr), r)
+                mstore(first_mptr, inv_first)
+                mstore(second_mptr, inv_second)
             }
 
             // Add (x, y) into point at (0x00, 0x20).
@@ -267,11 +276,7 @@ contract Halo2Verifier {
 
                 // Phase {{ loop.index }}
                 for
-                    {%- if loop.first %}
                     { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_advices)|hex() }}) }
-                    {%- else %}
-                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_advices)|hex() }}) }
-                    {%- endif %}
                     lt(proof_cptr, proof_cptr_end)
                     {}
                 {
@@ -309,6 +314,7 @@ contract Halo2Verifier {
 
                 success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q) // W'
                 {%- when Gwc19 %}
+                // TODO
                 {%- endmatch %}
 
                 // Read accumulator from instances
@@ -369,12 +375,11 @@ contract Halo2Verifier {
                 {
                     x_n := mulmod(x_n, x_n, r)
                 }
-                mstore(X_N_MPTR, x_n)
 
                 let omega := mload(OMEGA_MPTR)
 
-                let mptr_end := mul(0x20, add(mload(NUM_INSTANCES_MPTR), {{ num_neg_lagranges }}))
-                let mptr := 0x00
+                let mptr := X_N_MPTR
+                let mptr_end := add(mptr, mul(0x20, add(mload(NUM_INSTANCES_MPTR), {{ num_neg_lagranges }})))
                 for
                     { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
                     lt(mptr, mptr_end)
@@ -384,11 +389,10 @@ contract Halo2Verifier {
                     pow_of_omega := mulmod(pow_of_omega, omega, r)
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
-                mstore(mptr, x_n_minus_1)
-                success := batch_invert(success, add(mptr, 0x20), r)
-                mstore(X_N_MINUS_1_INV_MPTR, mload(mptr))
+                mstore(mptr_end, x_n_minus_1)
+                success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), r)
 
-                mptr := 0x00
+                mptr := X_N_MPTR
                 let l_i_common := mulmod(x_n_minus_1, mload(N_INV_MPTR), r)
                 for
                     { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
@@ -399,34 +403,40 @@ contract Halo2Verifier {
                     pow_of_omega := mulmod(pow_of_omega, omega, r)
                 }
 
-                let l_i_cptr := {{ ((num_neg_lagranges + 1) * 32)|hex() }}
+                let l_blind := mload(add(X_N_MPTR, 0x20))
+                let l_i_cptr := add(X_N_MPTR, 0x40)
+                for
+                    { let l_i_cptr_end := add(X_N_MPTR, {{ (num_neg_lagranges * 32)|hex() }}) }
+                    lt(l_i_cptr, l_i_cptr_end)
+                    { l_i_cptr := add(l_i_cptr, 0x20) }
+                {
+                    l_blind := addmod(l_blind, mload(l_i_cptr), r)
+                }
+
+                let instance_eval := mulmod(mload(l_i_cptr), calldataload(INSTANCE_CPTR), r)
                 let instance_cptr := add(INSTANCE_CPTR, 0x20)
-                let instance_eval := mulmod(mload({{ (num_neg_lagranges * 32)|hex() }}), calldataload(INSTANCE_CPTR), r)
+                l_i_cptr := add(l_i_cptr, 0x20)
                 for
                     { let instance_cptr_end := add(INSTANCE_CPTR, mul(0x20, mload(NUM_INSTANCES_MPTR))) }
                     lt(instance_cptr, instance_cptr_end)
-                    {}
+                    {
+                        instance_cptr := add(instance_cptr, 0x20)
+                        l_i_cptr := add(l_i_cptr, 0x20)
+                    }
                 {
                     instance_eval := addmod(instance_eval, mulmod(mload(l_i_cptr), calldataload(instance_cptr), r), r)
-                    l_i_cptr := add(l_i_cptr, 0x20)
-                    instance_cptr := add(instance_cptr, 0x20)
                 }
 
-                l_i_cptr := 0x40
-                let l_blind := mload(0x20)
-                for
-                    { let l_i_cptr_end := {{ 64 + 32 * (num_neg_lagranges - 2) }} }
-                    lt(l_i_cptr, l_i_cptr_end)
-                    {}
-                {
-                    l_blind := addmod(l_blind, mload(l_i_cptr), r)
-                    l_i_cptr := add(l_i_cptr, 0x20)
-                }
+                let x_n_minus_1_inv := mload(mptr_end)
+                let l_last := mload(X_N_MPTR)
+                let l_0 := mload(add(X_N_MPTR, {{ (num_neg_lagranges * 32)|hex() }}))
 
-                mstore(INSTANCE_EVAL_MPTR, instance_eval)
-                mstore(L_LAST_MPTR, mload(0x00))
+                mstore(X_N_MPTR, x_n)
+                mstore(X_N_MINUS_1_INV_MPTR, x_n_minus_1_inv)
+                mstore(L_LAST_MPTR, l_last)
                 mstore(L_BLIND_MPTR, l_blind)
-                mstore(L_0_MPTR, mload({{ (num_neg_lagranges * 32)|hex() }}))
+                mstore(L_0_MPTR, l_0)
+                mstore(INSTANCE_EVAL_MPTR, instance_eval)
             }
 
             // Compute quotient evavluation

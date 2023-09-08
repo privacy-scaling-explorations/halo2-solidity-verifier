@@ -1,9 +1,6 @@
 #![allow(clippy::useless_format)]
 
-use crate::{
-    codegen::util::{code_block, ConstraintSystemMeta, Data},
-    fe_to_u256,
-};
+use crate::codegen::util::{code_block, fe_to_u256, ConstraintSystemMeta, Data};
 use halo2_proofs::{
     halo2curves::ff::PrimeField,
     plonk::{
