@@ -54,7 +54,7 @@ pub(crate) mod test {
     };
     use std::{
         fmt::{self, Debug, Formatter},
-        io::Write,
+        io::{self, Write},
         process::{Command, Stdio},
         str,
     };
@@ -64,7 +64,7 @@ pub(crate) mod test {
     /// # Panics
     /// Panics if executable `solc` can not be found, or compilation fails.
     pub fn compile_solidity(solidity: impl AsRef<[u8]>) -> Vec<u8> {
-        let mut cmd = Command::new("solc")
+        let mut process = match Command::new("solc")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -72,13 +72,22 @@ pub(crate) mod test {
             .arg("--via-ir")
             .arg("-")
             .spawn()
-            .unwrap();
-        cmd.stdin
+        {
+            Ok(process) => process,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                panic!("Command 'solc' not found");
+            }
+            Err(err) => {
+                panic!("Failed to spwan process with command 'solc':\n{err}");
+            }
+        };
+        process
+            .stdin
             .take()
             .unwrap()
             .write_all(solidity.as_ref())
             .unwrap();
-        let output = cmd.wait_with_output().unwrap();
+        let output = process.wait_with_output().unwrap();
         let stdout = str::from_utf8(&output.stdout).unwrap();
         if let Some(binary) = find_binary(stdout) {
             binary
