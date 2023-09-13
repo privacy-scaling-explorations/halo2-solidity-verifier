@@ -7,7 +7,7 @@ use halo2_proofs::{
     plonk::{Any, Column, ConstraintSystem},
 };
 use itertools::{chain, izip, Itertools};
-use ruint::aliases::U256;
+use ruint::{aliases::U256, UintTryFrom};
 use std::{
     borrow::Borrow,
     collections::HashMap,
@@ -29,8 +29,8 @@ pub(crate) struct ConstraintSystemMeta {
     pub(crate) num_evals: usize,
     pub(crate) num_user_advices: Vec<usize>,
     pub(crate) num_user_challenges: Vec<usize>,
-    pub(crate) advice_index: Vec<usize>,
-    pub(crate) challenge_index: Vec<usize>,
+    pub(crate) advice_indices: Vec<usize>,
+    pub(crate) challenge_indices: Vec<usize>,
     pub(crate) rotation_last: i32,
 }
 
@@ -64,6 +64,8 @@ impl ConstraintSystemMeta {
             + (3 * num_permutation_zs - 1)
             + 5 * cs.lookups().len();
         let num_phase = *cs.advice_column_phase().iter().max().unwrap_or(&0) as usize + 1;
+        // Indices of advice and challenge are not same as their position in calldata/memory,
+        // because we support multiple phases, we need to remap them and find their actual indices.
         let remapping = |phase: Vec<u8>| {
             let nums = phase.iter().fold(vec![0; num_phase], |mut nums, phase| {
                 nums[*phase as usize] += 1;
@@ -86,8 +88,8 @@ impl ConstraintSystemMeta {
                 .collect::<Vec<_>>();
             (nums, index)
         };
-        let (num_user_advices, advice_index) = remapping(cs.advice_column_phase());
-        let (num_user_challenges, challenge_index) = remapping(cs.challenge_phase());
+        let (num_user_advices, advice_indices) = remapping(cs.advice_column_phase());
+        let (num_user_challenges, challenge_indices) = remapping(cs.challenge_phase());
         let rotation_last = -(cs.blinding_factors() as i32 + 1);
         Self {
             num_fixeds,
@@ -102,8 +104,8 @@ impl ConstraintSystemMeta {
             num_evals,
             num_user_advices,
             num_user_challenges,
-            advice_index,
-            challenge_index,
+            advice_indices,
+            challenge_indices,
             rotation_last,
         }
     }
@@ -122,6 +124,9 @@ impl ConstraintSystemMeta {
 
     pub(crate) fn num_challenges(&self) -> Vec<usize> {
         let mut num_challenges = self.num_user_challenges.clone();
+        // If there is no lookup used, merge also beta and gamma into the last user phase, to avoid
+        // squeezing challenge from nothing.
+        // Otherwise, merge theta into last user phase since they are originally adjacent.
         if self.num_lookup_permuteds == 0 {
             *num_challenges.last_mut().unwrap() += 3; // theta, beta, gamma
             num_challenges.extend([
@@ -203,10 +208,10 @@ impl Data {
         let fixed_comm_mptr = vk_mptr + vk.constants.len();
         let permutation_comm_mptr = fixed_comm_mptr + 2 * vk.fixed_comms.len();
         let challenge_mptr = permutation_comm_mptr + 2 * vk.permutation_comms.len();
-        let theta_mptr = challenge_mptr + meta.num_user_challenges.iter().sum::<usize>();
+        let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
-        let lookup_permuted_comm_start = advice_comm_start + 2 * meta.advice_index.len();
+        let lookup_permuted_comm_start = advice_comm_start + 2 * meta.advice_indices.len();
         let permutation_z_comm_start = lookup_permuted_comm_start + 2 * meta.num_lookup_permuteds;
         let lookup_z_comm_start = permutation_z_comm_start + 2 * meta.num_permutation_zs;
         let random_comm_start = lookup_z_comm_start + 2 * meta.num_lookup_zs;
@@ -230,7 +235,7 @@ impl Data {
         )
         .collect();
         let advice_comms = meta
-            .advice_index
+            .advice_indices
             .iter()
             .map(|idx| advice_comm_start + 2 * idx)
             .map_into()
@@ -252,7 +257,7 @@ impl Data {
         );
 
         let challenges = meta
-            .challenge_index
+            .challenge_indices
             .iter()
             .map(|idx| challenge_mptr + *idx)
             .map_into()
@@ -402,6 +407,9 @@ impl Sub<usize> for Value {
     }
 }
 
+/// `Ptr` points to a EVM word at either calldata or memory.
+///
+/// When adding or subtracting it by 1, its value moves by 32 and points to next/previous EVM word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Ptr {
     loc: Location,
@@ -521,6 +529,7 @@ impl From<Ptr> for EcPoint {
     }
 }
 
+/// Add indention to given lines by `4 * N` spaces.
 pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) -> Vec<String> {
     lines
         .into_iter()
@@ -528,14 +537,17 @@ pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) ->
         .collect()
 }
 
-pub(crate) fn code_block<const N: usize, const SHRINK: bool>(
+/// Create a code block for given lines with indention.
+///
+/// If `PACKED` is true, single line code block will be packed into single line.
+pub(crate) fn code_block<const N: usize, const PACKED: bool>(
     lines: impl IntoIterator<Item = String>,
 ) -> Vec<String> {
     let lines = lines.into_iter().collect_vec();
     let bracket_indent = " ".repeat((N - 1) * 4);
     match lines.len() {
         0 => vec![format!("{bracket_indent}{{}}")],
-        1 if SHRINK => vec![format!("{bracket_indent}{{ {} }}", lines[0])],
+        1 if PACKED => vec![format!("{bracket_indent}{{ {} }}", lines[0])],
         _ => chain![
             [format!("{bracket_indent}{{")],
             indent::<N>(lines),
@@ -545,6 +557,7 @@ pub(crate) fn code_block<const N: usize, const SHRINK: bool>(
     }
 }
 
+/// Create a for loop with proper indention.
 pub(crate) fn for_loop(
     initialization: impl IntoIterator<Item = String>,
     condition: impl Into<String>,
@@ -563,7 +576,7 @@ pub(crate) fn for_loop(
 
 pub(crate) fn g1_to_u256s(ec_point: impl Borrow<bn256::G1Affine>) -> [U256; 2] {
     let coords = ec_point.borrow().coordinates().unwrap();
-    [coords.x(), coords.y()].map(fe_to_u256::<bn256::Fq>)
+    [coords.x(), coords.y()].map(fq_to_u256)
 }
 
 pub(crate) fn g2_to_u256s(ec_point: impl Borrow<bn256::G2Affine>) -> [U256; 4] {
@@ -578,9 +591,24 @@ pub(crate) fn g2_to_u256s(ec_point: impl Borrow<bn256::G2Affine>) -> [U256; 4] {
     ]
 }
 
+pub(crate) fn fq_to_u256(fe: impl Borrow<bn256::Fq>) -> U256 {
+    fe_to_u256(fe)
+}
+
+pub(crate) fn fr_to_u256(fe: impl Borrow<bn256::Fr>) -> U256 {
+    fe_to_u256(fe)
+}
+
 pub(crate) fn fe_to_u256<F>(fe: impl Borrow<F>) -> U256
 where
     F: PrimeField<Repr = [u8; 0x20]>,
 {
     U256::from_le_bytes(fe.borrow().to_repr())
+}
+
+pub(crate) fn to_u256_be_bytes<T>(value: T) -> [u8; 32]
+where
+    U256: UintTryFrom<T>,
+{
+    U256::from(value).to_be_bytes()
 }

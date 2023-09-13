@@ -28,7 +28,7 @@ let calldata = encode_calldata(vk_address, &proof, &instances);
 
 Note that function selector is already included.
 
-## Limitation
+## Limitations
 
 - It only allows circuit with **exact 1 instance column** and **no rotated query to this instance column**.
 - Option `--via-ir` seems necessary when compiling the generated contract, otherwise it'd cause stack too deep error. However, `--via-ir` is not allowed to be used with `--standard-json`, not sure how to work around this yet.

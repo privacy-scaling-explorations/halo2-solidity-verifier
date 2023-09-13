@@ -5,7 +5,7 @@ use crate::codegen::{
         BatchOpenScheme::{Bdfg21, Gwc19},
     },
     template::{Halo2Verifier, Halo2VerifyingKey},
-    util::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
+    util::{fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
 };
 use halo2_proofs::{
     halo2curves::{bn256, ff::Field},
@@ -167,14 +167,14 @@ impl<'a> SolidityGenerator<'a> {
     fn generate_vk(&self) -> Halo2VerifyingKey {
         let constants = {
             let domain = self.vk.get_domain();
-            let vk_digest = fe_to_u256(vk_transcript_repr(self.vk));
+            let vk_digest = fr_to_u256(vk_transcript_repr(self.vk));
             let k = U256::from(domain.k());
-            let n_inv = fe_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
-            let omega = fe_to_u256(domain.get_omega());
-            let omega_inv = fe_to_u256(domain.get_omega_inv());
+            let n_inv = fr_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
+            let omega = fr_to_u256(domain.get_omega());
+            let omega_inv = fr_to_u256(domain.get_omega_inv());
             let omega_inv_to_l = {
                 let l = self.meta.rotation_last.unsigned_abs() as u64;
-                fe_to_u256(domain.get_omega_inv().pow_vartime([l]))
+                fr_to_u256(domain.get_omega_inv().pow_vartime([l]))
             };
             let num_instances = U256::from(self.num_instances);
             let has_accumulator = U256::from(self.acc_encoding.is_some());

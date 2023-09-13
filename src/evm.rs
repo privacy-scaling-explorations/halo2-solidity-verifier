@@ -1,4 +1,4 @@
-use crate::codegen::util::fe_to_u256;
+use crate::codegen::util::{fr_to_u256, to_u256_be_bytes};
 use halo2_proofs::halo2curves::bn256;
 use itertools::chain;
 use ruint::aliases::U256;
@@ -34,16 +34,14 @@ pub fn encode_calldata(
     };
     let num_instances = instances.len();
     chain![
-        fn_sig,
-        vk_address,
-        U256::from(offset).to_be_bytes::<0x20>(),
-        U256::from(offset + 0x20 + proof.len()).to_be_bytes::<0x20>(),
-        U256::from(proof.len()).to_be_bytes::<0x20>(),
-        proof.iter().cloned(),
-        U256::from(num_instances).to_be_bytes::<0x20>(),
-        instances
-            .iter()
-            .flat_map(|instance| fe_to_u256::<bn256::Fr>(instance).to_be_bytes::<0x20>()),
+        fn_sig,                                                      // function signature
+        vk_address,                                                  // verifying key address
+        to_u256_be_bytes(offset),                                    // offset of proof
+        to_u256_be_bytes(offset + 0x20 + proof.len()),               // offset of instances
+        to_u256_be_bytes(proof.len()),                               // length of proof
+        proof.iter().cloned(),                                       // proof
+        to_u256_be_bytes(num_instances),                             // length of instances
+        instances.iter().map(fr_to_u256).flat_map(to_u256_be_bytes), // instances
     ]
     .collect()
 }
