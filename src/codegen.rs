@@ -167,7 +167,7 @@ impl<'a> SolidityGenerator<'a> {
     fn generate_vk(&self) -> Halo2VerifyingKey {
         let constants = {
             let domain = self.vk.get_domain();
-            let vk_digest = fe_to_u256(self.vk.transcript_repr());
+            let vk_digest = fe_to_u256(vk_transcript_repr(self.vk));
             let k = U256::from(domain.k());
             let n_inv = fe_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
             let omega = fe_to_u256(domain.get_omega());
@@ -315,4 +315,20 @@ impl<'a> SolidityGenerator<'a> {
         .unwrap()
             * 0x20
     }
+}
+
+// Remove when `vk.transcript_repr()` is ready for usage.
+fn vk_transcript_repr(vk: &VerifyingKey<bn256::G1Affine>) -> bn256::Fr {
+    use blake2b_simd::Params;
+    use halo2_proofs::halo2curves::ff::FromUniformBytes;
+
+    let fmtted_pinned_vk = format!("{:?}", vk.pinned());
+    let mut hasher = Params::new()
+        .hash_length(64)
+        .personal(b"Halo2-Verify-Key")
+        .to_state();
+    hasher
+        .update(&(fmtted_pinned_vk.len() as u64).to_le_bytes())
+        .update(fmtted_pinned_vk.as_bytes());
+    FromUniformBytes::from_uniform_bytes(hasher.finalize().as_array())
 }
