@@ -1,5 +1,7 @@
 # Halo2 Solidity Verifier
 
+> ⚠️ This repo has NOT been audited and is NOT intended for a production environment yet.
+
 Solidity verifier generator for [`halo2`](http://github.com/privacy-scaling-explorations/halo2) proof with KZG polynomial commitment scheme on BN254
 
 ## Usage
