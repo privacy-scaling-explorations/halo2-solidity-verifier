@@ -33,8 +33,7 @@ Note that function selector is already included.
 ## Limitations
 
 - It only allows circuit with **exact 1 instance column** and **no rotated query to this instance column**.
-- Option `--via-ir` seems necessary when compiling the generated contract, otherwise it'd cause stack too deep error. However, `--via-ir` is not allowed to be used with `--standard-json`, not sure how to work around this yet.
-- Even the `configure` is same, the [selector compression](https://github.com/privacy-scaling-explorations/halo2/blob/7a2165617195d8baa422ca7b2b364cef02380390/halo2_proofs/src/plonk/circuit/compress_selectors.rs#L51) might lead to different configuration when selector assignments are different. To avoid this we might need to update halo2 to support disabling selector compression.
+- Currently even the `configure` is same, the [selector compression](https://github.com/privacy-scaling-explorations/halo2/blob/7a2165617195d8baa422ca7b2b364cef02380390/halo2_proofs/src/plonk/circuit/compress_selectors.rs#L51) might lead to different configuration when selector assignments are different. After PR https://github.com/privacy-scaling-explorations/halo2/pull/212 is merged we will have an alternative API to do key generation without selector compression.
 - Now it only supports BDFG21 batch open scheme (aka SHPLONK), GWC19 is not yet implemented.
 
 ## Compatibility
