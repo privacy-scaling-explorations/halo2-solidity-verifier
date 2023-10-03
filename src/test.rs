@@ -102,7 +102,7 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
 
         let (gas_cost, output) = evm.call(
             verifier_address,
-            encode_calldata(vk_address.0.into(), &proof, &instances),
+            encode_calldata(Some(vk_address.into()), &proof, &instances),
         );
         assert_eq!(output, [vec![0; 31], vec![1]].concat());
         println!("Gas cost: {gas_cost}");

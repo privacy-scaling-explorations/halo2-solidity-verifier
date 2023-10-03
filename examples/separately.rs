@@ -45,7 +45,7 @@ fn main() {
         let calldata = {
             let instances = circuit.instances();
             let proof = create_proof_checked(&params[&k], &pk, circuit, &instances, &mut rng);
-            encode_calldata(vk_address.0.into(), &proof, &instances)
+            encode_calldata(Some(vk_address.into()), &proof, &instances)
         };
         let (gas_cost, output) = evm.call(verifier_address, calldata);
         assert_eq!(output, [vec![0; 31], vec![1]].concat());
