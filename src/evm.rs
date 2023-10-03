@@ -69,7 +69,7 @@ pub(crate) mod test {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .arg("--bin")
-            .arg("--via-ir")
+            .arg("--optimize")
             .arg("-")
             .spawn()
         {
