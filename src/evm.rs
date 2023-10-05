@@ -48,6 +48,7 @@ pub fn encode_calldata(
 
 #[cfg(any(test, feature = "evm"))]
 pub(crate) mod test {
+    pub use revm;
     use revm::{
         primitives::{Address, CreateScheme, ExecutionResult, Output, TransactTo, TxEnv},
         InMemoryDB, EVM,

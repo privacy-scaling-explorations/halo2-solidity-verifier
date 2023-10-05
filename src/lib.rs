@@ -18,4 +18,4 @@ pub use evm::{encode_calldata, FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_
 pub use transcript::Keccak256Transcript;
 
 #[cfg(feature = "evm")]
-pub use evm::test::{compile_solidity, Evm};
+pub use evm::test::{compile_solidity, revm, Evm};
