@@ -10,7 +10,7 @@ use halo2_proofs::{
 };
 use itertools::{chain, izip, Itertools};
 use ruint::aliases::U256;
-use std::{borrow::Borrow, cell::RefCell, cmp::Ordering, collections::HashMap, iter};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap, iter};
 
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a, F: PrimeField> {
@@ -319,34 +319,18 @@ fn u256_string(value: U256) -> String {
 }
 
 fn fixed_eval_var(fixed_query: FixedQuery) -> String {
-    let column_index = fixed_query.column_index();
-    let rotation = fixed_query.rotation().0;
-    match rotation.cmp(&0) {
-        Ordering::Less => {
-            format!("f_{}_prev_{}", column_index, rotation.abs())
-        }
-        Ordering::Equal => {
-            format!("f_{}", column_index)
-        }
-        Ordering::Greater => {
-            format!("f_{}_next_{}", column_index, rotation)
-        }
-    }
+    column_eval_var("f", fixed_query.column_index(), fixed_query.rotation().0)
 }
 
 fn advice_eval_var(advice_query: AdviceQuery) -> String {
-    let column_index = advice_query.column_index();
-    let rotation = advice_query.rotation().0;
+    column_eval_var("a", advice_query.column_index(), advice_query.rotation().0)
+}
+
+fn column_eval_var(prefix: &'static str, column_index: usize, rotation: i32) -> String {
     match rotation.cmp(&0) {
-        Ordering::Less => {
-            format!("a_{}_prev_{}", column_index, rotation.abs())
-        }
-        Ordering::Equal => {
-            format!("a_{}", column_index)
-        }
-        Ordering::Greater => {
-            format!("a_{}_next_{}", column_index, rotation)
-        }
+        Ordering::Less => format!("{prefix}_{column_index}_prev_{}", rotation.abs()),
+        Ordering::Equal => format!("{prefix}_{column_index}"),
+        Ordering::Greater => format!("{prefix}_{column_index}_next_{rotation}"),
     }
 }
 
@@ -371,7 +355,7 @@ where
             expr, constant, fixed, advice, instance, challenge, negated, sum, product, scaled,
         )
     };
-    match expression.borrow() {
+    match expression {
         Expression::Constant(scalar) => constant(fe_to_u256(*scalar)),
         Expression::Selector(_) => unreachable!(),
         Expression::Fixed(query) => fixed(*query),

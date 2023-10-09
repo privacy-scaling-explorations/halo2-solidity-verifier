@@ -433,7 +433,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
         for_loop(
             [
                 format!("let mptr := 0x00"),
-                format!("let mptr_end := {}", second_batch_invert_end),
+                format!("let mptr_end := {second_batch_invert_end}"),
                 format!("let sum_mptr := {}", sums[0].ptr()),
             ],
             "lt(mptr, mptr_end)",
@@ -451,7 +451,7 @@ pub(crate) fn bdfg21_computations(meta: &ConstraintSystemMeta, data: &Data) -> V
         for_loop(
             [
                 format!("let sum_inv_mptr := {}", second_batch_invert_end - 2),
-                format!("let sum_inv_mptr_end := {}", second_batch_invert_end),
+                format!("let sum_inv_mptr_end := {second_batch_invert_end}"),
                 format!("let r_eval_mptr := {}", r_evals[r_evals.len() - 2].ptr()),
             ],
             "lt(sum_inv_mptr, sum_inv_mptr_end)",
