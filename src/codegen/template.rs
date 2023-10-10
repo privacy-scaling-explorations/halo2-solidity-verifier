@@ -73,7 +73,7 @@ mod filters {
     }
 
     pub fn hex_padded(value: impl LowerHex, pad: usize) -> ::askama::Result<String> {
-        let string = format!("0x{value:0pad$x}", pad = pad);
+        let string = format!("0x{value:0pad$x}");
         if string == "0x0" {
             Ok(format!("0x{}", "0".repeat(pad)))
         } else {

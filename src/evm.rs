@@ -197,20 +197,18 @@ pub(crate) mod test {
                         for (log_idx, log) in logs.iter().enumerate() {
                             println!("log#{log_idx}");
                             for (topic_idx, topic) in log.topics.iter().enumerate() {
-                                println!("  topic{topic_idx}: {:?}", topic);
+                                println!("  topic{topic_idx}: {topic:?}");
                             }
                         }
                         println!("--- end ---");
                     }
                     (gas_used, output)
                 }
-                ExecutionResult::Revert { gas_used, output } => panic!(
-                    "Transaction reverts with gas_used {gas_used} and output {:#x}",
-                    output
-                ),
+                ExecutionResult::Revert { gas_used, output } => {
+                    panic!("Transaction reverts with gas_used {gas_used} and output {output:#x}")
+                }
                 ExecutionResult::Halt { reason, gas_used } => panic!(
-                    "Transaction halts unexpectedly with gas_used {gas_used} and reason {:?}",
-                    reason
+                    "Transaction halts unexpectedly with gas_used {gas_used} and reason {reason:?}"
                 ),
             }
         }
