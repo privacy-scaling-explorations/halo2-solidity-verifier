@@ -380,6 +380,9 @@ contract Halo2Verifier {
 
                 let mptr := X_N_MPTR
                 let mptr_end := add(mptr, mul(0x20, add(mload(NUM_INSTANCES_MPTR), {{ num_neg_lagranges }})))
+                if iszero(mload(NUM_INSTANCES_MPTR)) {
+                    mptr_end := add(mptr_end, 0x20)
+                }
                 for
                     { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
                     lt(mptr, mptr_end)
@@ -413,11 +416,12 @@ contract Halo2Verifier {
                     l_blind := addmod(l_blind, mload(l_i_cptr), r)
                 }
 
-                let instance_eval := mulmod(mload(l_i_cptr), calldataload(INSTANCE_CPTR), r)
-                let instance_cptr := add(INSTANCE_CPTR, 0x20)
-                l_i_cptr := add(l_i_cptr, 0x20)
+                let instance_eval := 0
                 for
-                    { let instance_cptr_end := add(INSTANCE_CPTR, mul(0x20, mload(NUM_INSTANCES_MPTR))) }
+                    {
+                        let instance_cptr := INSTANCE_CPTR
+                        let instance_cptr_end := add(instance_cptr, mul(0x20, mload(NUM_INSTANCES_MPTR)))
+                    }
                     lt(instance_cptr, instance_cptr_end)
                     {
                         instance_cptr := add(instance_cptr, 0x20)
