@@ -97,9 +97,8 @@ impl<'a> SolidityGenerator<'a> {
         num_instances: usize,
     ) -> Self {
         assert_ne!(vk.cs().num_advice_columns(), 0);
-        assert_eq!(
-            vk.cs().num_instance_columns(),
-            1,
+        assert!(
+            vk.cs().num_instance_columns() <= 1,
             "Multiple instance columns is not yet implemented"
         );
         assert!(
