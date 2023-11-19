@@ -20,9 +20,9 @@ pub(crate) struct ConstraintSystemMeta {
     pub(crate) num_fixeds: usize,
     pub(crate) permutation_columns: Vec<Column<Any>>,
     pub(crate) permutation_chunk_len: usize,
-    pub(crate) num_lookup_permuteds: usize,
+    pub(crate) num_lookup_ms: usize,
     pub(crate) num_permutation_zs: usize,
-    pub(crate) num_lookup_zs: usize,
+    pub(crate) num_lookup_phis: usize,
     pub(crate) num_quotients: usize,
     pub(crate) advice_queries: Vec<(usize, i32)>,
     pub(crate) fixed_queries: Vec<(usize, i32)>,
@@ -39,13 +39,13 @@ impl ConstraintSystemMeta {
         let num_fixeds = cs.num_fixed_columns();
         let permutation_columns = cs.permutation().get_columns();
         let permutation_chunk_len = cs.degree() - 2;
-        let num_lookup_permuteds = 2 * cs.lookups().len();
+        let num_lookup_ms = cs.lookups().len();
         let num_permutation_zs = cs
             .permutation()
             .get_columns()
             .chunks(cs.degree() - 2)
             .count();
-        let num_lookup_zs = cs.lookups().len();
+        let num_lookup_phis = cs.lookups().len();
         let num_quotients = cs.degree() - 1;
         let advice_queries = cs
             .advice_queries()
@@ -62,7 +62,7 @@ impl ConstraintSystemMeta {
             + 1
             + cs.permutation().get_columns().len()
             + (3 * num_permutation_zs - 1)
-            + 5 * cs.lookups().len();
+            + 3 * cs.lookups().len();
         let num_phase = *cs.advice_column_phase().iter().max().unwrap_or(&0) as usize + 1;
         // Indices of advice and challenge are not same as their position in calldata/memory,
         // because we support multiple phases, we need to remap them and find their actual indices.
@@ -95,9 +95,9 @@ impl ConstraintSystemMeta {
             num_fixeds,
             permutation_columns,
             permutation_chunk_len,
-            num_lookup_permuteds,
+            num_lookup_ms,
             num_permutation_zs,
-            num_lookup_zs,
+            num_lookup_phis,
             num_quotients,
             advice_queries,
             fixed_queries,
@@ -113,10 +113,10 @@ impl ConstraintSystemMeta {
     pub(crate) fn num_advices(&self) -> Vec<usize> {
         chain![
             self.num_user_advices.iter().cloned(),
-            (self.num_lookup_permuteds != 0).then_some(self.num_lookup_permuteds), // lookup permuted
+            (self.num_lookup_ms != 0).then_some(self.num_lookup_ms), // lookup permuted
             [
-                self.num_permutation_zs + self.num_lookup_zs + 1, // permutation and lookup grand products, random
-                self.num_quotients,                               // quotients
+                self.num_permutation_zs + self.num_lookup_phis + 1, // permutation and lookup grand products, random
+                self.num_quotients,                                 // quotients
             ],
         ]
         .collect()
@@ -127,7 +127,7 @@ impl ConstraintSystemMeta {
         // If there is no lookup used, merge also beta and gamma into the last user phase, to avoid
         // squeezing challenge from nothing.
         // Otherwise, merge theta into last user phase since they are originally adjacent.
-        if self.num_lookup_permuteds == 0 {
+        if self.num_lookup_ms == 0 {
             *num_challenges.last_mut().unwrap() += 3; // theta, beta, gamma
             num_challenges.extend([
                 1, // y
@@ -149,7 +149,7 @@ impl ConstraintSystemMeta {
     }
 
     pub(crate) fn num_lookups(&self) -> usize {
-        self.num_lookup_zs
+        self.num_lookup_phis
     }
 
     pub(crate) fn proof_len(&self, scheme: BatchOpenScheme) -> usize {
@@ -179,9 +179,9 @@ pub(crate) struct Data {
     pub(crate) fixed_comms: Vec<EcPoint>,
     pub(crate) permutation_comms: HashMap<Column<Any>, EcPoint>,
     pub(crate) advice_comms: Vec<EcPoint>,
-    pub(crate) lookup_permuted_comms: Vec<(EcPoint, EcPoint)>,
+    pub(crate) lookup_m_comms: Vec<EcPoint>,
     pub(crate) permutation_z_comms: Vec<EcPoint>,
-    pub(crate) lookup_z_comms: Vec<EcPoint>,
+    pub(crate) lookup_phi_comms: Vec<EcPoint>,
     pub(crate) random_comm: EcPoint,
 
     pub(crate) challenges: Vec<Word>,
@@ -192,7 +192,7 @@ pub(crate) struct Data {
     pub(crate) random_eval: Word,
     pub(crate) permutation_evals: HashMap<Column<Any>, Word>,
     pub(crate) permutation_z_evals: Vec<(Word, Word, Word)>,
-    pub(crate) lookup_evals: Vec<(Word, Word, Word, Word, Word)>,
+    pub(crate) lookup_evals: Vec<(Word, Word, Word)>,
 
     pub(crate) computed_quotient_comm: EcPoint,
     pub(crate) computed_quotient_eval: Word,
@@ -211,10 +211,10 @@ impl Data {
         let theta_mptr = challenge_mptr + meta.challenge_indices.len();
 
         let advice_comm_start = proof_cptr;
-        let lookup_permuted_comm_start = advice_comm_start + 2 * meta.advice_indices.len();
-        let permutation_z_comm_start = lookup_permuted_comm_start + 2 * meta.num_lookup_permuteds;
-        let lookup_z_comm_start = permutation_z_comm_start + 2 * meta.num_permutation_zs;
-        let random_comm_start = lookup_z_comm_start + 2 * meta.num_lookup_zs;
+        let lookup_m_comm_start = advice_comm_start + 2 * meta.advice_indices.len();
+        let permutation_z_comm_start = lookup_m_comm_start + 2 * meta.num_lookup_ms;
+        let lookup_phi_comm_start = permutation_z_comm_start + 2 * meta.num_permutation_zs;
+        let random_comm_start = lookup_phi_comm_start + 2 * meta.num_lookup_phis;
         let quotient_comm_start = random_comm_start + 2;
 
         let eval_cptr = quotient_comm_start + 2 * meta.num_quotients;
@@ -224,7 +224,7 @@ impl Data {
         let permutation_eval_cptr = random_eval_cptr + 1;
         let permutation_z_eval_cptr = permutation_eval_cptr + meta.num_permutations();
         let lookup_eval_cptr = permutation_z_eval_cptr + 3 * meta.num_permutation_zs - 1;
-        let w_cptr = lookup_eval_cptr + 5 * meta.num_lookups();
+        let w_cptr = lookup_eval_cptr + 3 * meta.num_lookups();
 
         let fixed_comms = EcPoint::range(fixed_comm_mptr)
             .take(meta.num_fixeds)
@@ -240,15 +240,14 @@ impl Data {
             .map(|idx| advice_comm_start + 2 * idx)
             .map_into()
             .collect();
-        let lookup_permuted_comms = EcPoint::range(lookup_permuted_comm_start)
-            .take(meta.num_lookup_permuteds)
-            .tuples()
+        let lookup_m_comms = EcPoint::range(lookup_m_comm_start)
+            .take(meta.num_lookup_ms)
             .collect();
         let permutation_z_comms = EcPoint::range(permutation_z_comm_start)
             .take(meta.num_permutation_zs)
             .collect();
-        let lookup_z_comms = EcPoint::range(lookup_z_comm_start)
-            .take(meta.num_lookup_zs)
+        let lookup_phi_comms = EcPoint::range(lookup_phi_comm_start)
+            .take(meta.num_lookup_phis)
             .collect();
         let random_comm = random_comm_start.into();
         let computed_quotient_comm = EcPoint::new(
@@ -284,7 +283,7 @@ impl Data {
             .tuples()
             .collect_vec();
         let lookup_evals = Word::range(lookup_eval_cptr)
-            .take(5 * meta.num_lookup_zs)
+            .take(3 * meta.num_lookup_phis)
             .tuples()
             .collect_vec();
         let computed_quotient_eval = Ptr::memory("QUOTIENT_EVAL_MPTR").into();
@@ -298,9 +297,9 @@ impl Data {
             fixed_comms,
             permutation_comms,
             advice_comms,
-            lookup_permuted_comms,
+            lookup_m_comms,
             permutation_z_comms,
-            lookup_z_comms,
+            lookup_phi_comms,
             random_comm,
             computed_quotient_comm,
 

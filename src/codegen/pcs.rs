@@ -47,17 +47,15 @@ pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
             .skip(1)
             .map(|(&comm, evals)| Query::new(comm, meta.rotation_last, evals.2)),
         izip!(
-            &data.lookup_permuted_comms,
-            &data.lookup_z_comms,
+            &data.lookup_m_comms,
+            &data.lookup_phi_comms,
             &data.lookup_evals
         )
-        .flat_map(|(permuted_comms, &z_comm, evals)| {
+        .flat_map(|(&m_comm, &phi_comm, evals)| {
             [
-                Query::new(z_comm, 0, evals.0),
-                Query::new(permuted_comms.0, 0, evals.2),
-                Query::new(permuted_comms.1, 0, evals.4),
-                Query::new(permuted_comms.0, -1, evals.3),
-                Query::new(z_comm, 1, evals.1),
+                Query::new(phi_comm, 0, evals.0),
+                Query::new(phi_comm, 1, evals.1),
+                Query::new(m_comm, 0, evals.2),
             ]
         }),
         meta.fixed_queries.iter().map(|query| {

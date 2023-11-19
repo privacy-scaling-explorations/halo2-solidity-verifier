@@ -343,6 +343,8 @@ mod halo2 {
             }
 
             fn configure(meta: &mut ConstraintSystem<M::Scalar>) -> Self::Config {
+                meta.set_minimum_degree(9);
+
                 let selectors = [(); 10].map(|_| meta.selector());
                 let complex_selectors = [(); 10].map(|_| meta.complex_selector());
                 let fixeds = [(); 10].map(|_| meta.fixed_column());
@@ -394,6 +396,22 @@ mod halo2 {
                     advices.iter().tuple_windows()
                 ) {
                     meta.lookup_any("", |meta| {
+                        izip!([q1, q2, q3], [f1, f2, f3], [a1, a2, a3])
+                            .map(|(q, f, a)| {
+                                let q = meta.query_selector(*q);
+                                let f = meta.query_fixed(*f, Rotation::cur());
+                                let a = meta.query_advice(*a, Rotation::cur());
+                                (q * a, f)
+                            })
+                            .collect_vec()
+                    });
+                }
+
+                for _ in 0..10 {
+                    meta.lookup_any("", |meta| {
+                        let (q1, q2, q3) = complex_selectors.iter().tuple_windows().next().unwrap();
+                        let (f1, f2, f3) = fixeds.iter().tuple_windows().next().unwrap();
+                        let (a1, a2, a3) = advices.iter().tuple_windows().next().unwrap();
                         izip!([q1, q2, q3], [f1, f2, f3], [a1, a2, a3])
                             .map(|(q, f, a)| {
                                 let q = meta.query_selector(*q);
