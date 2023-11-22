@@ -301,7 +301,11 @@ impl<'a> SolidityGenerator<'a> {
             Gwc19 => unimplemented!(),
         };
 
+        let hash_instance = self.meta.num_advices()[0] * 2 + self.num_instances + 1;
+
         itertools::max(chain![
+            // Hashing instance and witness commitments
+            [hash_instance],
             // Hashing advice commitments
             chain![self.meta.num_advices().into_iter()].map(|n| n * 2 + 1),
             // Hashing evaluations
