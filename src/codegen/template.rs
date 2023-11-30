@@ -25,7 +25,7 @@ impl Halo2VerifyingKey {
 #[template(path = "Halo2Verifier.sol")]
 pub(crate) struct Halo2Verifier {
     pub(crate) scheme: BatchOpenScheme,
-    pub(crate) vk: Option<Halo2VerifyingKey>,
+    pub(crate) embedded_vk: Option<Halo2VerifyingKey>,
     pub(crate) vk_len: usize,
     pub(crate) proof_len: usize,
     pub(crate) vk_mptr: Ptr,
