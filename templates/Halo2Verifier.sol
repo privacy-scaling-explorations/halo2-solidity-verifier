@@ -262,7 +262,6 @@ contract Halo2Verifier {
                 let proof_cptr := PROOF_CPTR
                 let challenge_mptr := CHALLENGE_MPTR
                 {%- for num_advices in num_advices %}
-                {%- let num_challenges = num_challenges[loop.index0] %}
 
                 // Phase {{ loop.index }}
                 for
@@ -274,7 +273,7 @@ contract Halo2Verifier {
                 }
 
                 challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)
-                {%- for _ in 0..num_challenges - 1 %}
+                {%- for _ in 0..num_challenges[loop.index0] - 1 %}
                 challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)
                 {%- endfor %}
                 {%- endfor %}
