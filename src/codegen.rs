@@ -176,7 +176,7 @@ impl<'a> SolidityGenerator<'a> {
                 let l = self.meta.rotation_last.unsigned_abs() as u64;
                 fr_to_u256(domain.get_omega_inv().pow_vartime([l]))
             };
-            let has_accumulator = U256::from(self.acc_encoding.is_some());
+            let has_accumulator = U256::from(self.acc_encoding.is_some() as usize);
             let acc_offset = self
                 .acc_encoding
                 .map(|acc_encoding| U256::from(acc_encoding.offset))
