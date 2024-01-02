@@ -223,7 +223,7 @@ mod prelude {
             ff::PrimeField,
         },
         plonk::*,
-        poly::{commitment::Params, kzg::commitment::ParamsKZG, Rotation},
+        poly::{kzg::commitment::ParamsKZG, Rotation},
     };
     pub use rand::{
         rngs::{OsRng, StdRng},
