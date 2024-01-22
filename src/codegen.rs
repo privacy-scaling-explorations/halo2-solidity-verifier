@@ -167,6 +167,7 @@ impl<'a> SolidityGenerator<'a> {
         let constants = {
             let domain = self.vk.get_domain();
             let vk_digest = fr_to_u256(vk_transcript_repr(self.vk));
+            let num_instances = U256::from(self.num_instances);
             let k = U256::from(domain.k());
             let n_inv = fr_to_u256(bn256::Fr::from(1 << domain.k()).invert().unwrap());
             let omega = fr_to_u256(domain.get_omega());
@@ -175,8 +176,7 @@ impl<'a> SolidityGenerator<'a> {
                 let l = self.meta.rotation_last.unsigned_abs() as u64;
                 fr_to_u256(domain.get_omega_inv().pow_vartime([l]))
             };
-            let num_instances = U256::from(self.num_instances);
-            let has_accumulator = U256::from(self.acc_encoding.is_some());
+            let has_accumulator = U256::from(self.acc_encoding.is_some() as usize);
             let acc_offset = self
                 .acc_encoding
                 .map(|acc_encoding| U256::from(acc_encoding.offset))
@@ -195,12 +195,12 @@ impl<'a> SolidityGenerator<'a> {
             let neg_s_g2 = g2_to_u256s(-self.params.s_g2());
             vec![
                 ("vk_digest", vk_digest),
+                ("num_instances", num_instances),
                 ("k", k),
                 ("n_inv", n_inv),
                 ("omega", omega),
                 ("omega_inv", omega_inv),
                 ("omega_inv_to_l", omega_inv_to_l),
-                ("num_instances", num_instances),
                 ("has_accumulator", has_accumulator),
                 ("acc_offset", acc_offset),
                 ("num_acc_limbs", num_acc_limbs),
@@ -267,7 +267,7 @@ impl<'a> SolidityGenerator<'a> {
 
         Halo2Verifier {
             scheme: self.scheme,
-            vk: (!separate).then_some(vk),
+            embedded_vk: (!separate).then_some(vk),
             vk_len,
             vk_mptr,
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
@@ -301,15 +301,18 @@ impl<'a> SolidityGenerator<'a> {
             Gwc19 => unimplemented!(),
         };
 
-        itertools::max(chain![
-            // Hashing advice commitments
-            chain![self.meta.num_advices().into_iter()].map(|n| n * 2 + 1),
-            // Hashing evaluations
-            [self.meta.num_evals + 1],
+        itertools::max([
+            // Keccak256 input (can overwrite vk)
+            itertools::max(chain![
+                self.meta.num_advices().into_iter().map(|n| n * 2 + 1),
+                [self.meta.num_evals + 1],
+            ])
+            .unwrap()
+            .saturating_sub(vk.len() / 0x20),
             // PCS computation
-            [pcs_computation],
+            pcs_computation,
             // Pairing
-            [12],
+            12,
         ])
         .unwrap()
             * 0x20

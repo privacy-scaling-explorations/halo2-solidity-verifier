@@ -343,6 +343,7 @@ mod halo2 {
             }
 
             fn configure(meta: &mut ConstraintSystem<M::Scalar>) -> Self::Config {
+                #[cfg(feature = "mv-lookup")]
                 meta.set_minimum_degree(9);
 
                 let selectors = [(); 10].map(|_| meta.selector());
@@ -351,15 +352,15 @@ mod halo2 {
                 let (advices, challenges) = (0..10)
                     .map(|idx| match idx % 3 {
                         0 => (
-                            meta.advice_column_in(FirstPhase),
+                            meta.advice_column_in(FirstPhase, true),
                             meta.challenge_usable_after(FirstPhase),
                         ),
                         1 => (
-                            meta.advice_column_in(SecondPhase),
+                            meta.advice_column_in(SecondPhase, true),
                             meta.challenge_usable_after(SecondPhase),
                         ),
                         2 => (
-                            meta.advice_column_in(ThirdPhase),
+                            meta.advice_column_in(ThirdPhase, true),
                             meta.challenge_usable_after(ThirdPhase),
                         ),
                         _ => unreachable!(),
@@ -407,6 +408,7 @@ mod halo2 {
                     });
                 }
 
+                #[cfg(feature = "mv-lookup")]
                 for _ in 0..10 {
                     meta.lookup_any("", |meta| {
                         let (q1, q2, q3) = complex_selectors.iter().tuple_windows().next().unwrap();

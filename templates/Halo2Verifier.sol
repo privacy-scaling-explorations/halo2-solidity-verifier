@@ -13,12 +13,12 @@ contract Halo2Verifier {
 
     uint256 internal constant                VK_MPTR = {{ vk_mptr }};
     uint256 internal constant         VK_DIGEST_MPTR = {{ vk_mptr }};
-    uint256 internal constant                 K_MPTR = {{ vk_mptr + 1 }};
-    uint256 internal constant             N_INV_MPTR = {{ vk_mptr + 2 }};
-    uint256 internal constant             OMEGA_MPTR = {{ vk_mptr + 3 }};
-    uint256 internal constant         OMEGA_INV_MPTR = {{ vk_mptr + 4 }};
-    uint256 internal constant    OMEGA_INV_TO_L_MPTR = {{ vk_mptr + 5 }};
-    uint256 internal constant     NUM_INSTANCES_MPTR = {{ vk_mptr + 6 }};
+    uint256 internal constant     NUM_INSTANCES_MPTR = {{ vk_mptr + 1 }};
+    uint256 internal constant                 K_MPTR = {{ vk_mptr + 2 }};
+    uint256 internal constant             N_INV_MPTR = {{ vk_mptr + 3 }};
+    uint256 internal constant             OMEGA_MPTR = {{ vk_mptr + 4 }};
+    uint256 internal constant         OMEGA_INV_MPTR = {{ vk_mptr + 5 }};
+    uint256 internal constant    OMEGA_INV_TO_L_MPTR = {{ vk_mptr + 6 }};
     uint256 internal constant   HAS_ACCUMULATOR_MPTR = {{ vk_mptr + 7 }};
     uint256 internal constant        ACC_OFFSET_MPTR = {{ vk_mptr + 8 }};
     uint256 internal constant     NUM_ACC_LIMBS_MPTR = {{ vk_mptr + 9 }};
@@ -70,10 +70,10 @@ contract Halo2Verifier {
     uint256 internal constant   PAIRING_RHS_Y_MPTR = {{ theta_mptr + 25 }};
 
     function verifyProof(
-        {%- match vk %}
-        {%- when Some with (vk) %}
+        {%- match self.embedded_vk %}
         {%- when None %}
         address vk,
+        {%- else %}
         {%- endmatch %}
         bytes calldata proof,
         uint256[] calldata instances
@@ -223,25 +223,15 @@ contract Halo2Verifier {
             let success := true
 
             {
-                {%- match vk %}
-                {%- when Some with (vk) %}
-                // Load vk into memory
-                {%- for (name, chunk) in vk.constants %}
+                {%- match self.embedded_vk %}
+                {%- when Some with (embedded_vk) %}
+                // Load vk_digest and num_instances of vk into memory
+                {%- for (name, chunk) in embedded_vk.constants[..2] %}
                 mstore({{ vk_mptr + loop.index0 }}, {{ chunk|hex_padded(64) }}) // {{ name }}
                 {%- endfor %}
-                {%- for (x, y) in vk.fixed_comms %}
-                {%- let offset = vk.constants.len() %}
-                mstore({{ vk_mptr + offset + 2 * loop.index0 }}, {{ x|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].x
-                mstore({{ vk_mptr + offset + 2 * loop.index0 + 1 }}, {{ y|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].y
-                {%- endfor %}
-                {%- for (x, y) in vk.permutation_comms %}
-                {%- let offset = vk.constants.len() + 2 * vk.fixed_comms.len() %}
-                mstore({{ vk_mptr + offset + 2 * loop.index0 }}, {{ x|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].x
-                mstore({{ vk_mptr + offset + 2 * loop.index0 + 1 }}, {{ y|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].y
-                {%- endfor %}
                 {%- when None %}
-                // Copy vk into memory
-                extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
+                // Copy vk_digest and num_instances of vk into memory
+                extcodecopy(vk, VK_MPTR, 0x00, 0x40)
                 {%- endmatch %}
 
                 // Check valid length of proof
@@ -272,7 +262,6 @@ contract Halo2Verifier {
                 let proof_cptr := PROOF_CPTR
                 let challenge_mptr := CHALLENGE_MPTR
                 {%- for num_advices in num_advices %}
-                {%- let num_challenges = num_challenges[loop.index0] %}
 
                 // Phase {{ loop.index }}
                 for
@@ -284,7 +273,7 @@ contract Halo2Verifier {
                 }
 
                 challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)
-                {%- for _ in 0..num_challenges - 1 %}
+                {%- for _ in 0..num_challenges[loop.index0] - 1 %}
                 challenge_mptr := squeeze_challenge_cont(challenge_mptr, r)
                 {%- endfor %}
                 {%- endfor %}
@@ -315,6 +304,27 @@ contract Halo2Verifier {
                 success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q) // W'
                 {%- when Gwc19 %}
                 // TODO
+                {%- endmatch %}
+
+                {%~ match self.embedded_vk %}
+                {%- when Some with (embedded_vk) %}
+                // Load full vk into memory
+                {%- for (name, chunk) in embedded_vk.constants %}
+                mstore({{ vk_mptr + loop.index0 }}, {{ chunk|hex_padded(64) }}) // {{ name }}
+                {%- endfor %}
+                {%- for (x, y) in embedded_vk.fixed_comms %}
+                {%- let offset = embedded_vk.constants.len() %}
+                mstore({{ vk_mptr + offset + 2 * loop.index0 }}, {{ x|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].x
+                mstore({{ vk_mptr + offset + 2 * loop.index0 + 1 }}, {{ y|hex_padded(64) }}) // fixed_comms[{{ loop.index0 }}].y
+                {%- endfor %}
+                {%- for (x, y) in embedded_vk.permutation_comms %}
+                {%- let offset = embedded_vk.constants.len() + 2 * embedded_vk.fixed_comms.len() %}
+                mstore({{ vk_mptr + offset + 2 * loop.index0 }}, {{ x|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].x
+                mstore({{ vk_mptr + offset + 2 * loop.index0 + 1 }}, {{ y|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].y
+                {%- endfor %}
+                {%- when None %}
+                // Copy full vk into memory
+                extcodecopy(vk, VK_MPTR, 0x00, {{ vk_len|hex() }})
                 {%- endmatch %}
 
                 // Read accumulator from instances

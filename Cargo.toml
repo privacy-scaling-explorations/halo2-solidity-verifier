@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-halo2_proofs = { git = "https://github.com/zkonduit/halo2", ref= "3d7b5e61b3052680ccb279e05bdcc21dd8a8fedf" }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2", branch="main" }
 askama = { version = "0.12.0", features = ["config"], default-features = false }
 hex = "0.4.3"
 ruint = "1.8.0"
@@ -15,16 +15,18 @@ itertools = "0.11.0"
 blake2b_simd = "1"
 
 # For feature = "evm"
-revm = { version = "3.3.0", optional = true }
+revm = { version = "3.3.0", default-features = false, optional = true }
 
 [dev-dependencies]
 rand = "0.8.5"
-revm = "3.3.0"
+revm = { version = "3.3.0", default-features = false }
 halo2_maingate  = { git = "https://github.com/zkonduit/halo2wrong", branch = "ac/chunked-mv-lookup", package = "maingate" }
+
 
 [features]
 default = []
 evm = ["dep:revm"]
+mv-lookup = ["halo2_proofs/mv-lookup", "halo2_maingate/mv-lookup"]
 
 [[example]]
 name = "separately"

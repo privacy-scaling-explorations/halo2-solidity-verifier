@@ -120,6 +120,7 @@ where
         .collect()
     }
 
+    #[cfg(feature = "mv-lookup")]
     pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
         let evaluate = |expressions: &Vec<_>| {
             let (lines, inputs) = expressions
@@ -234,6 +235,106 @@ where
                         },
                     ]
                     .collect_vec(),
+                ]
+            })
+            .zip(iter::repeat("eval".to_string()))
+            .collect_vec()
+    }
+
+    #[cfg(not(feature = "mv-lookup"))]
+    pub fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
+        let input_tables = self
+            .cs
+            .lookups()
+            .iter()
+            .map(|lookup| {
+                let [(input_lines, inputs), (table_lines, tables)] =
+                    [lookup.input_expressions(), lookup.table_expressions()].map(|expressions| {
+                        let (lines, inputs) = expressions
+                            .iter()
+                            .map(|expression| self.evaluate(expression))
+                            .fold((Vec::new(), Vec::new()), |mut acc, result| {
+                                acc.0.extend(result.0);
+                                acc.1.push(result.1);
+                                acc
+                            });
+                        self.reset();
+                        (lines, inputs)
+                    });
+                (input_lines, inputs, table_lines, tables)
+            })
+            .collect_vec();
+        izip!(input_tables, &self.data.lookup_evals)
+            .flat_map(|(input_table, evals)| {
+                let (input_lines, inputs, table_lines, tables) = input_table;
+                let (input_0, rest_inputs) = inputs.split_first().unwrap();
+                let (table_0, rest_tables) = tables.split_first().unwrap();
+                let (z, z_next, p_input, p_input_prev, p_table) = evals;
+                [
+                    vec![
+                        format!("let l_0 := mload(L_0_MPTR)"),
+                        format!("let eval := addmod(l_0, mulmod(l_0, sub(r, {z}), r), r)"),
+                    ],
+                    {
+                        let item = format!("addmod(mulmod({z}, {z}, r), sub(r, {z}), r)");
+                        vec![
+                            format!("let l_last := mload(L_LAST_MPTR)"),
+                            format!("let eval := mulmod(l_last, {item}, r)"),
+                        ]
+                    },
+                    chain![
+                        ["let theta := mload(THETA_MPTR)", "let input"].map(str::to_string),
+                        code_block::<1, false>(chain![
+                            input_lines,
+                            [format!("input := {input_0}")],
+                            rest_inputs.iter().map(|input| format!(
+                                "input := addmod(mulmod(input, theta, r), {input}, r)"
+                            ))
+                        ]),
+                        ["let table"].map(str::to_string),
+                        code_block::<1, false>(chain![
+                            table_lines,
+                            [format!("table := {table_0}")],
+                            rest_tables.iter().map(|table| format!(
+                                "table := addmod(mulmod(table, theta, r), {table}, r)"
+                            ))
+                        ]),
+                        {
+                            let lhs = format!("addmod({p_input}, beta, r)");
+                            let rhs = format!("addmod({p_table}, gamma, r)");
+                            let permuted = format!("mulmod({lhs}, {rhs}, r)");
+                            let input =
+                                "mulmod(addmod(input, beta, r), addmod(table, gamma, r), r)";
+                            [
+                                format!("let beta := mload(BETA_MPTR)"),
+                                format!("let gamma := mload(GAMMA_MPTR)"),
+                                format!("let lhs := mulmod({z_next}, {permuted}, r)"),
+                                format!("let rhs := mulmod({z}, {input}, r)"),
+                            ]
+                        },
+                        {
+                            let l_inactive = "addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), r)";
+                            let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
+                            [format!(
+                                "let eval := mulmod({l_active}, addmod(lhs, sub(r, rhs), r), r)"
+                            )]
+                        },
+                    ]
+                    .collect_vec(),
+                    {
+                        let l_0 = "mload(L_0_MPTR)";
+                        let item = format!("addmod({p_input}, sub(r, {p_table}), r)");
+                        vec![format!("let eval := mulmod({l_0}, {item}, r)")]
+                    },
+                    {
+                        let l_inactive = "addmod(mload(L_BLIND_MPTR), mload(L_LAST_MPTR), r)";
+                        let l_active = format!("addmod(1, sub(r, {l_inactive}), r)");
+                        let lhs = format!("addmod({p_input}, sub(r, {p_table}), r)");
+                        let rhs = format!("addmod({p_input}, sub(r, {p_input_prev}), r)");
+                        vec![format!(
+                            "let eval := mulmod({l_active}, mulmod({lhs}, {rhs}, r), r)"
+                        )]
+                    },
                 ]
             })
             .zip(iter::repeat("eval".to_string()))
