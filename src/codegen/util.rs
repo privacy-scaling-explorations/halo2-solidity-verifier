@@ -26,6 +26,7 @@ pub(crate) struct ConstraintSystemMeta {
     pub(crate) num_quotients: usize,
     pub(crate) advice_queries: Vec<(usize, i32)>,
     pub(crate) fixed_queries: Vec<(usize, i32)>,
+    pub(crate) num_rotations: usize,
     pub(crate) num_evals: usize,
     pub(crate) num_user_advices: Vec<usize>,
     pub(crate) num_user_challenges: Vec<usize>,
@@ -91,6 +92,21 @@ impl ConstraintSystemMeta {
         let (num_user_advices, advice_indices) = remapping(cs.advice_column_phase());
         let (num_user_challenges, challenge_indices) = remapping(cs.challenge_phase());
         let rotation_last = -(cs.blinding_factors() as i32 + 1);
+        let num_rotations = chain![
+            advice_queries.iter().map(|query| query.1),
+            fixed_queries.iter().map(|query| query.1),
+            (num_permutation_zs > 0)
+                .then_some([0, 1])
+                .into_iter()
+                .flatten(),
+            (num_permutation_zs > 1).then_some(rotation_last),
+            (num_lookup_zs > 0)
+                .then_some([-1, 0, 1])
+                .into_iter()
+                .flatten(),
+        ]
+        .unique()
+        .count();
         Self {
             num_fixeds,
             permutation_columns,
@@ -102,6 +118,7 @@ impl ConstraintSystemMeta {
             advice_queries,
             fixed_queries,
             num_evals,
+            num_rotations,
             num_user_advices,
             num_user_challenges,
             advice_indices,
@@ -159,12 +176,10 @@ impl ConstraintSystemMeta {
     }
 
     pub(crate) fn batch_open_proof_len(&self, scheme: BatchOpenScheme) -> usize {
-        match scheme {
-            Bdfg21 => 2 * 0x40,
-            Gwc19 => {
-                unimplemented!()
-            }
-        }
+        (match scheme {
+            Bdfg21 => 2,
+            Gwc19 => self.num_rotations,
+        }) * 0x40
     }
 }
 
@@ -477,6 +492,10 @@ impl Word {
     pub(crate) fn ptr(&self) -> Ptr {
         self.0
     }
+
+    pub(crate) fn loc(&self) -> Location {
+        self.0.loc()
+    }
 }
 
 impl Display for Word {
@@ -530,10 +549,12 @@ impl From<Ptr> for EcPoint {
 }
 
 /// Add indention to given lines by `4 * N` spaces.
-pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) -> Vec<String> {
+pub(crate) fn indent<const N: usize>(
+    lines: impl IntoIterator<Item = impl Into<String>>,
+) -> Vec<String> {
     lines
         .into_iter()
-        .map(|line| format!("{}{line}", " ".repeat(N * 4)))
+        .map(|line| format!("{}{}", " ".repeat(N * 4), line.into()))
         .collect()
 }
 
@@ -541,9 +562,9 @@ pub(crate) fn indent<const N: usize>(lines: impl IntoIterator<Item = String>) ->
 ///
 /// If `PACKED` is true, single line code block will be packed into single line.
 pub(crate) fn code_block<const N: usize, const PACKED: bool>(
-    lines: impl IntoIterator<Item = String>,
+    lines: impl IntoIterator<Item = impl Into<String>>,
 ) -> Vec<String> {
-    let lines = lines.into_iter().collect_vec();
+    let lines = lines.into_iter().map_into().collect_vec();
     let bracket_indent = " ".repeat((N - 1) * 4);
     match lines.len() {
         0 => vec![format!("{bracket_indent}{{}}")],
@@ -559,10 +580,10 @@ pub(crate) fn code_block<const N: usize, const PACKED: bool>(
 
 /// Create a for loop with proper indention.
 pub(crate) fn for_loop(
-    initialization: impl IntoIterator<Item = String>,
+    initialization: impl IntoIterator<Item = impl Into<String>>,
     condition: impl Into<String>,
-    advancement: impl IntoIterator<Item = String>,
-    body: impl IntoIterator<Item = String>,
+    advancement: impl IntoIterator<Item = impl Into<String>>,
+    body: impl IntoIterator<Item = impl Into<String>>,
 ) -> Vec<String> {
     chain![
         ["for".to_string()],
@@ -572,6 +593,50 @@ pub(crate) fn for_loop(
         code_block::<1, false>(body),
     ]
     .collect()
+}
+
+pub(crate) fn group_backward_adjacent_words<'a>(
+    words: impl IntoIterator<Item = &'a Word>,
+) -> Vec<(Location, Vec<&'a Word>)> {
+    words.into_iter().fold(Vec::new(), |mut word_groups, word| {
+        if let Some(last_group) = word_groups.last_mut() {
+            let last_word = **last_group.1.last().unwrap();
+            if last_group.0 == word.loc()
+                && last_word.ptr().value().is_integer()
+                && last_word.ptr() - 1 == word.ptr()
+            {
+                last_group.1.push(word)
+            } else {
+                word_groups.push((word.loc(), vec![word]))
+            }
+            word_groups
+        } else {
+            vec![(word.loc(), vec![word])]
+        }
+    })
+}
+
+pub(crate) fn group_backward_adjacent_ec_points<'a>(
+    ec_point: impl IntoIterator<Item = &'a EcPoint>,
+) -> Vec<(Location, Vec<&'a EcPoint>)> {
+    ec_point
+        .into_iter()
+        .fold(Vec::new(), |mut ec_point_groups, ec_point| {
+            if let Some(last_group) = ec_point_groups.last_mut() {
+                let last_ec_point = **last_group.1.last().unwrap();
+                if last_group.0 == ec_point.loc()
+                    && last_ec_point.x().ptr().value().is_integer()
+                    && last_ec_point.x().ptr() - 2 == ec_point.x().ptr()
+                {
+                    last_group.1.push(ec_point)
+                } else {
+                    ec_point_groups.push((ec_point.loc(), vec![ec_point]))
+                }
+                ec_point_groups
+            } else {
+                vec![(ec_point.loc(), vec![ec_point])]
+            }
+        })
 }
 
 pub(crate) fn g1_to_u256s(ec_point: impl Borrow<bn256::G1Affine>) -> [U256; 2] {

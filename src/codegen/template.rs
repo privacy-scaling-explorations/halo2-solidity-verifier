@@ -36,6 +36,7 @@ pub(crate) struct Halo2Verifier {
     pub(crate) num_neg_lagranges: usize,
     pub(crate) num_advices: Vec<usize>,
     pub(crate) num_challenges: Vec<usize>,
+    pub(crate) num_rotations: usize,
     pub(crate) num_evals: usize,
     pub(crate) num_quotients: usize,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,

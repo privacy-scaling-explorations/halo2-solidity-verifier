@@ -1,5 +1,9 @@
 use crate::{
-    codegen::{AccumulatorEncoding, BatchOpenScheme::Bdfg21, SolidityGenerator},
+    codegen::{
+        AccumulatorEncoding,
+        BatchOpenScheme::{self, Bdfg21, Gwc19},
+        SolidityGenerator,
+    },
     encode_calldata,
     evm::test::{compile_solidity, Evm},
     FN_SIG_VERIFY_PROOF, FN_SIG_VERIFY_PROOF_WITH_VK_ADDRESS,
@@ -26,31 +30,51 @@ fn function_signature() {
 }
 
 #[test]
-fn render_huge() {
-    run_render::<halo2::huge::HugeCircuit<Bn256>>()
+fn render_bdfg21_huge() {
+    run_render::<halo2::huge::HugeCircuit<Bn256>>(Bdfg21)
 }
 
 #[test]
-fn render_maingate() {
-    run_render::<halo2::maingate::MainGateWithRange<Bn256>>()
+fn render_bdfg21_maingate() {
+    run_render::<halo2::maingate::MainGateWithRange<Bn256>>(Bdfg21)
 }
 
 #[test]
-fn render_separately_huge() {
-    run_render_separately::<halo2::huge::HugeCircuit<Bn256>>()
+fn render_gwc19_huge() {
+    run_render::<halo2::huge::HugeCircuit<Bn256>>(Gwc19)
 }
 
 #[test]
-fn render_separately_maingate() {
-    run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>()
+fn render_gwc19_maingate() {
+    run_render::<halo2::maingate::MainGateWithRange<Bn256>>(Gwc19)
 }
 
-fn run_render<C: halo2::TestCircuit<Fr>>() {
+#[test]
+fn render_separately_bdfg21_huge() {
+    run_render_separately::<halo2::huge::HugeCircuit<Bn256>>(Bdfg21)
+}
+
+#[test]
+fn render_separately_bdfg21_maingate() {
+    run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>(Bdfg21)
+}
+
+#[test]
+fn render_separately_gwc19_huge() {
+    run_render_separately::<halo2::huge::HugeCircuit<Bn256>>(Gwc19)
+}
+
+#[test]
+fn render_separately_gwc19_maingate() {
+    run_render_separately::<halo2::maingate::MainGateWithRange<Bn256>>(Gwc19)
+}
+
+fn run_render<C: halo2::TestCircuit<Fr>>(scheme: BatchOpenScheme) {
     let acc_encoding = AccumulatorEncoding::new(0, 4, 68).into();
     let (params, vk, instances, proof) =
-        halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata::<C>(C::min_k(), scheme, acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+    let generator = SolidityGenerator::new(&params, &vk, scheme, instances.len())
         .set_acc_encoding(acc_encoding);
     let verifier_solidity = generator.render().unwrap();
     let verifier_creation_code = compile_solidity(verifier_solidity);
@@ -68,12 +92,12 @@ fn run_render<C: halo2::TestCircuit<Fr>>() {
     println!("Gas cost: {gas_cost}");
 }
 
-fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
+fn run_render_separately<C: halo2::TestCircuit<Fr>>(scheme: BatchOpenScheme) {
     let acc_encoding = AccumulatorEncoding::new(0, 4, 68).into();
     let (params, vk, instances, _) =
-        halo2::create_testdata_bdfg21::<C>(C::min_k(), acc_encoding, std_rng());
+        halo2::create_testdata::<C>(C::min_k(), scheme, acc_encoding, std_rng());
 
-    let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+    let generator = SolidityGenerator::new(&params, &vk, scheme, instances.len())
         .set_acc_encoding(acc_encoding);
     let (verifier_solidity, _vk_solidity) = generator.render_separately().unwrap();
     let verifier_creation_code = compile_solidity(&verifier_solidity);
@@ -90,8 +114,8 @@ fn run_render_separately<C: halo2::TestCircuit<Fr>>() {
 
     for k in C::min_k()..C::min_k() + 4 {
         let (params, vk, instances, proof) =
-            halo2::create_testdata_bdfg21::<C>(k, acc_encoding, std_rng());
-        let generator = SolidityGenerator::new(&params, &vk, Bdfg21, instances.len())
+            halo2::create_testdata::<C>(k, scheme, acc_encoding, std_rng());
+        let generator = SolidityGenerator::new(&params, &vk, scheme, instances.len())
             .set_acc_encoding(acc_encoding);
 
         let (verifier_solidity, vk_solidity) = generator.render_separately().unwrap();
@@ -131,7 +155,11 @@ fn save_generated(verifier: &str, vk: Option<&str>) {
 }
 
 mod halo2 {
-    use crate::{codegen::AccumulatorEncoding, transcript::Keccak256Transcript};
+    use crate::{
+        codegen::AccumulatorEncoding,
+        transcript::Keccak256Transcript,
+        BatchOpenScheme::{self, Bdfg21, Gwc19},
+    };
     use halo2_proofs::{
         arithmetic::CurveAffine,
         halo2curves::{
@@ -143,7 +171,7 @@ mod halo2 {
         plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, VerifyingKey},
         poly::kzg::{
             commitment::ParamsKZG,
-            multiopen::{ProverSHPLONK, VerifierSHPLONK},
+            multiopen::{ProverGWC, ProverSHPLONK, VerifierGWC, VerifierSHPLONK},
             strategy::SingleStrategy,
         },
         transcript::TranscriptWriterBuffer,
@@ -162,8 +190,9 @@ mod halo2 {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn create_testdata_bdfg21<C: TestCircuit<bn256::Fr>>(
+    pub fn create_testdata<C: TestCircuit<bn256::Fr>>(
         k: u32,
+        scheme: BatchOpenScheme,
         acc_encoding: Option<AccumulatorEncoding>,
         mut rng: impl RngCore + Clone,
     ) -> (
@@ -172,41 +201,54 @@ mod halo2 {
         Vec<bn256::Fr>,
         Vec<u8>,
     ) {
-        let circuit = C::new(acc_encoding, rng.clone());
-        let instances = circuit.instances();
-
-        let params = ParamsKZG::<bn256::Bn256>::setup(k, &mut rng);
-        let vk = keygen_vk(&params, &circuit).unwrap();
-        let pk = keygen_pk(&params, vk.clone(), &circuit).unwrap();
-
-        let proof = {
-            let mut transcript = Keccak256Transcript::new(Vec::new());
-            create_proof::<_, ProverSHPLONK<_>, _, _, _, _>(
-                &params,
-                &pk,
-                &[circuit],
-                &[&[&instances]],
-                &mut rng,
-                &mut transcript,
-            )
-            .unwrap();
-            transcript.finalize()
-        };
-
-        let result = {
-            let mut transcript = Keccak256Transcript::new(proof.as_slice());
-            verify_proof::<_, VerifierSHPLONK<_>, _, _, SingleStrategy<_>>(
-                &params,
-                pk.get_vk(),
-                SingleStrategy::new(&params),
-                &[&[&instances]],
-                &mut transcript,
-            )
-        };
-        assert!(result.is_ok());
-
-        (params, vk, instances, proof)
+        match scheme {
+            Bdfg21 => {
+                create_testdata_inner!(ProverSHPLONK<_>, VerifierSHPLONK<_>, k, acc_encoding, rng)
+            }
+            Gwc19 => create_testdata_inner!(ProverGWC<_>, VerifierGWC<_>, k, acc_encoding, rng),
+        }
     }
+
+    macro_rules! create_testdata_inner {
+        ($p:ty, $v:ty, $k:ident, $acc_encoding:ident, $rng:ident) => {{
+            let circuit = C::new($acc_encoding, $rng.clone());
+            let instances = circuit.instances();
+
+            let params = ParamsKZG::<bn256::Bn256>::setup($k, &mut $rng);
+            let vk = keygen_vk(&params, &circuit).unwrap();
+            let pk = keygen_pk(&params, vk.clone(), &circuit).unwrap();
+
+            let proof = {
+                let mut transcript = Keccak256Transcript::new(Vec::new());
+                create_proof::<_, $p, _, _, _, _>(
+                    &params,
+                    &pk,
+                    &[circuit],
+                    &[&[&instances]],
+                    &mut $rng,
+                    &mut transcript,
+                )
+                .unwrap();
+                transcript.finalize()
+            };
+
+            let result = {
+                let mut transcript = Keccak256Transcript::new(proof.as_slice());
+                verify_proof::<_, $v, _, _, SingleStrategy<_>>(
+                    &params,
+                    pk.get_vk(),
+                    SingleStrategy::new(&params),
+                    &[&[&instances]],
+                    &mut transcript,
+                )
+            };
+            assert!(result.is_ok());
+
+            (params, vk, instances, proof)
+        }};
+    }
+
+    use create_testdata_inner;
 
     fn random_accumulator_limbs<M>(
         acc_encoding: AccumulatorEncoding,
