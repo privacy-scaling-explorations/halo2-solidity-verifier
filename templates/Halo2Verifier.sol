@@ -367,7 +367,9 @@ contract Halo2Verifier {
                         shift := add(shift, num_limb_bits)
                     }
 
+                    success := and(success, and(lt(lhs_x, q), lt(lhs_y, q)))
                     success := and(success, eq(mulmod(lhs_y, lhs_y, q), addmod(mulmod(lhs_x, mulmod(lhs_x, lhs_x, q), q), 3, q)))
+                    success := and(success, and(lt(rhs_x, q), lt(rhs_y, q)))
                     success := and(success, eq(mulmod(rhs_y, rhs_y, q), addmod(mulmod(rhs_x, mulmod(rhs_x, rhs_x, q), q), 3, q)))
 
                     mstore(ACC_LHS_X_MPTR, lhs_x)
