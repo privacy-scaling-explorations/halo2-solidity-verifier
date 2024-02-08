@@ -253,17 +253,18 @@ mod halo2 {
     fn random_accumulator_limbs<M>(
         acc_encoding: AccumulatorEncoding,
         mut rng: impl RngCore,
-    ) -> Vec<M::Scalar>
+    ) -> Vec<M::Fr>
     where
         M: MultiMillerLoop,
+        M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
         <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-        M::Scalar: PrimeField<Repr = [u8; 0x20]>,
+        <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = [u8; 0x20]>,
     {
-        let s = M::Scalar::random(&mut rng);
+        let s = M::Fr::random(&mut rng);
         let g1 = M::G1Affine::generator();
         let g2 = M::G2Affine::generator();
         let neg_s_g2 = (g2 * -s).to_affine();
-        let lhs_scalar = M::Scalar::random(&mut rng);
+        let lhs_scalar = M::Fr::random(&mut rng);
         let rhs_scalar = lhs_scalar * s.invert().unwrap();
         let [lhs, rhs] = [lhs_scalar, rhs_scalar].map(|scalar| (g1 * scalar).to_affine());
 
@@ -337,13 +338,14 @@ mod halo2 {
         use std::{array, fmt::Debug, iter, mem};
 
         #[derive(Clone, Debug, Default)]
-        pub struct HugeCircuit<M: MultiMillerLoop>(Vec<M::Scalar>);
+        pub struct HugeCircuit<M: MultiMillerLoop>(Vec<M::Fr>);
 
-        impl<M: MultiMillerLoop> TestCircuit<M::Scalar> for HugeCircuit<M>
+        impl<M: MultiMillerLoop> TestCircuit<M::Fr> for HugeCircuit<M>
         where
             M: MultiMillerLoop,
+            M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
             <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-            M::Scalar: PrimeField<Repr = [u8; 0x20]>,
+            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = [u8; 0x20]>,
         {
             fn min_k() -> u32 {
                 6
@@ -353,22 +355,19 @@ mod halo2 {
                 let instances = if let Some(acc_encoding) = acc_encoding {
                     random_accumulator_limbs::<M>(acc_encoding, rng)
                 } else {
-                    iter::repeat_with(|| M::Scalar::random(&mut rng))
+                    iter::repeat_with(|| M::Fr::random(&mut rng))
                         .take(10)
                         .collect()
                 };
                 Self(instances)
             }
 
-            fn instances(&self) -> Vec<M::Scalar> {
+            fn instances(&self) -> Vec<M::Fr> {
                 self.0.clone()
             }
         }
 
-        impl<M: MultiMillerLoop> Circuit<M::Scalar> for HugeCircuit<M>
-        where
-            M::Scalar: PrimeField,
-        {
+        impl<M: MultiMillerLoop> Circuit<M::Fr> for HugeCircuit<M> {
             type Config = (
                 [Selector; 10],
                 [Selector; 10],
@@ -384,7 +383,7 @@ mod halo2 {
                 unimplemented!()
             }
 
-            fn configure(meta: &mut ConstraintSystem<M::Scalar>) -> Self::Config {
+            fn configure(meta: &mut ConstraintSystem<M::Fr>) -> Self::Config {
                 let selectors = [(); 10].map(|_| meta.selector());
                 let complex_selectors = [(); 10].map(|_| meta.complex_selector());
                 let fixeds = [(); 10].map(|_| meta.fixed_column());
@@ -411,7 +410,7 @@ mod halo2 {
 
                 meta.create_gate("", |meta| {
                     let selectors = selectors.map(|selector| meta.query_selector(selector));
-                    let advices: [Expression<M::Scalar>; 10] = array::from_fn(|idx| {
+                    let advices: [Expression<M::Fr>; 10] = array::from_fn(|idx| {
                         let rotation = Rotation((idx as i32 - advices.len() as i32) / 2);
                         meta.query_advice(advices[idx], rotation)
                     });
@@ -457,7 +456,7 @@ mod halo2 {
             fn synthesize(
                 &self,
                 (selectors, complex_selectors, fixeds, advices, instance): Self::Config,
-                mut layouter: impl Layouter<M::Scalar>,
+                mut layouter: impl Layouter<M::Fr>,
             ) -> Result<(), plonk::Error> {
                 let assigneds = layouter.assign_region(
                     || "",
@@ -472,7 +471,7 @@ mod halo2 {
                             q.enable(&mut region, next_offset())?;
                         }
                         for (idx, column) in izip!(1.., fixeds) {
-                            let value = Value::known(M::Scalar::from(idx));
+                            let value = Value::known(M::Fr::from(idx));
                             region.assign_fixed(|| "", column, next_offset(), || value)?;
                         }
                         izip!(advices, &self.0)
@@ -549,14 +548,15 @@ mod halo2 {
 
         #[derive(Clone, Default)]
         pub struct MainGateWithRange<M: MultiMillerLoop> {
-            instances: Vec<M::Scalar>,
+            instances: Vec<M::Fr>,
         }
 
-        impl<M> TestCircuit<M::Scalar> for MainGateWithRange<M>
+        impl<M> TestCircuit<M::Fr> for MainGateWithRange<M>
         where
             M: MultiMillerLoop,
+            M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
             <M::G1Affine as CurveAffine>::Base: PrimeField<Repr = [u8; 0x20]>,
-            M::Scalar: PrimeField<Repr = [u8; 0x20]>,
+            <M::G1Affine as CurveAffine>::ScalarExt: PrimeField<Repr = [u8; 0x20]>,
         {
             fn min_k() -> u32 {
                 9
@@ -566,22 +566,19 @@ mod halo2 {
                 let instances = if let Some(acc_encoding) = acc_encoding {
                     random_accumulator_limbs::<M>(acc_encoding, rng)
                 } else {
-                    iter::repeat_with(|| M::Scalar::random(&mut rng))
+                    iter::repeat_with(|| M::Fr::random(&mut rng))
                         .take(10)
                         .collect()
                 };
                 Self { instances }
             }
 
-            fn instances(&self) -> Vec<M::Scalar> {
+            fn instances(&self) -> Vec<M::Fr> {
                 self.instances.clone()
             }
         }
 
-        impl<M: MultiMillerLoop> Circuit<M::Scalar> for MainGateWithRange<M>
-        where
-            M::Scalar: PrimeField,
-        {
+        impl<M: MultiMillerLoop> Circuit<M::Fr> for MainGateWithRange<M> {
             type Config = MainGateWithRangeConfig;
             type FloorPlanner = SimpleFloorPlanner;
             #[cfg(feature = "halo2_circuit_params")]
@@ -591,14 +588,14 @@ mod halo2 {
                 unimplemented!()
             }
 
-            fn configure(meta: &mut ConstraintSystem<M::Scalar>) -> Self::Config {
+            fn configure(meta: &mut ConstraintSystem<M::Fr>) -> Self::Config {
                 MainGateWithRangeConfig::configure(meta, vec![8], vec![4, 7])
             }
 
             fn synthesize(
                 &self,
                 config: Self::Config,
-                mut layouter: impl Layouter<M::Scalar>,
+                mut layouter: impl Layouter<M::Fr>,
             ) -> Result<(), Error> {
                 let main_gate = config.main_gate();
                 let range_chip = config.range_chip();
@@ -618,25 +615,20 @@ mod halo2 {
                         // Dummy gates to make all fixed column with values
                         range_chip.decompose(
                             &mut ctx,
-                            Value::known(M::Scalar::from(u64::MAX)),
+                            Value::known(M::Fr::from(u64::MAX)),
                             8,
                             64,
                         )?;
                         range_chip.decompose(
                             &mut ctx,
-                            Value::known(M::Scalar::from(u32::MAX as u64)),
+                            Value::known(M::Fr::from(u32::MAX as u64)),
                             8,
                             39,
                         )?;
                         let a = &advices[0];
-                        let b = main_gate.sub_sub_with_constant(
-                            &mut ctx,
-                            a,
-                            a,
-                            a,
-                            M::Scalar::from(2),
-                        )?;
-                        let cond = main_gate.assign_bit(&mut ctx, Value::known(M::Scalar::ONE))?;
+                        let b =
+                            main_gate.sub_sub_with_constant(&mut ctx, a, a, a, M::Fr::from(2))?;
+                        let cond = main_gate.assign_bit(&mut ctx, Value::known(M::Fr::ONE))?;
                         main_gate.select(&mut ctx, a, &b, &cond)?;
 
                         Ok(advices)
