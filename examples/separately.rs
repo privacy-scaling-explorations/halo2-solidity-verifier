@@ -176,7 +176,7 @@ mod application {
         }
 
         fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-            meta.set_minimum_degree(4);
+            meta.set_minimum_degree(5);
             StandardPlonkConfig::configure(meta)
         }
 

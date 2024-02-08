@@ -34,9 +34,8 @@ Note that function selector is already included.
 
 ## Limitations & Caveats
 
-- It only allows circuit with **exact 1 instance column** and **no rotated query to this instance column**.
+- It only allows circuit with **less or equal than 1 instance column** and **no rotated query to this instance column**.
 - Currently even the `configure` is same, the [selector compression](https://github.com/privacy-scaling-explorations/halo2/blob/7a2165617195d8baa422ca7b2b364cef02380390/halo2_proofs/src/plonk/circuit/compress_selectors.rs#L51) might lead to different configuration when selector assignments are different. To avoid this, please use [`keygen_vk_custom`](https://github.com/privacy-scaling-explorations/halo2/blob/6fc6d7ca018f3899b030618cb18580249b1e7c82/halo2_proofs/src/plonk/keygen.rs#L223) with `compress_selectors: false` to do key generation without selector compression.
-- Now it only supports BDFG21 batch open scheme (aka SHPLONK), GWC19 is not yet implemented.
 
 ## Compatibility
 

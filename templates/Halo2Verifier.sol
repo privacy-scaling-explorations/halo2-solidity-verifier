@@ -47,7 +47,8 @@ contract Halo2Verifier {
     uint256 internal constant    NU_MPTR = {{ theta_mptr + 6 }};
     uint256 internal constant    MU_MPTR = {{ theta_mptr + 7 }};
     {%- when Gwc19 %}
-    // TODO
+    uint256 internal constant    NU_MPTR = {{ theta_mptr + 5 }};
+    uint256 internal constant    MU_MPTR = {{ theta_mptr + 6 }};
     {%- endmatch %}
 
     uint256 internal constant       ACC_LHS_X_MPTR = {{ theta_mptr + 8 }};
@@ -63,7 +64,7 @@ contract Halo2Verifier {
     uint256 internal constant   QUOTIENT_EVAL_MPTR = {{ theta_mptr + 18 }};
     uint256 internal constant      QUOTIENT_X_MPTR = {{ theta_mptr + 19 }};
     uint256 internal constant      QUOTIENT_Y_MPTR = {{ theta_mptr + 20 }};
-    uint256 internal constant          R_EVAL_MPTR = {{ theta_mptr + 21 }};
+    uint256 internal constant       G1_SCALAR_MPTR = {{ theta_mptr + 21 }};
     uint256 internal constant   PAIRING_LHS_X_MPTR = {{ theta_mptr + 22 }};
     uint256 internal constant   PAIRING_LHS_Y_MPTR = {{ theta_mptr + 23 }};
     uint256 internal constant   PAIRING_RHS_X_MPTR = {{ theta_mptr + 24 }};
@@ -303,7 +304,17 @@ contract Halo2Verifier {
 
                 success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q) // W'
                 {%- when Gwc19 %}
-                // TODO
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // nu
+
+                for
+                    { let proof_cptr_end := add(proof_cptr, {{ (2 * 32 * num_rotations)|hex() }}) }
+                    lt(proof_cptr, proof_cptr_end)
+                    {}
+                {
+                    success, proof_cptr, hash_mptr := read_ec_point(success, proof_cptr, hash_mptr, q)
+                }
+
+                challenge_mptr, hash_mptr := squeeze_challenge(challenge_mptr, hash_mptr, r)       // mu
                 {%- endmatch %}
 
                 {%~ match self.embedded_vk %}
@@ -356,7 +367,9 @@ contract Halo2Verifier {
                         shift := add(shift, num_limb_bits)
                     }
 
+                    success := and(success, and(lt(lhs_x, q), lt(lhs_y, q)))
                     success := and(success, eq(mulmod(lhs_y, lhs_y, q), addmod(mulmod(lhs_x, mulmod(lhs_x, lhs_x, q), q), 3, q)))
+                    success := and(success, and(lt(rhs_x, q), lt(rhs_y, q)))
                     success := and(success, eq(mulmod(rhs_y, rhs_y, q), addmod(mulmod(rhs_x, mulmod(rhs_x, rhs_x, q), q), 3, q)))
 
                     mstore(ACC_LHS_X_MPTR, lhs_x)

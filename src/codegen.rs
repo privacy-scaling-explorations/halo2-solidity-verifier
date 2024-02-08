@@ -1,9 +1,5 @@
 use crate::codegen::{
     evaluator::Evaluator,
-    pcs::{
-        bdfg21_computations, queries, rotation_sets,
-        BatchOpenScheme::{Bdfg21, Gwc19},
-    },
     template::{Halo2Verifier, Halo2VerifyingKey},
     util::{fr_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
 };
@@ -107,11 +103,6 @@ impl<'a> SolidityGenerator<'a> {
                 .iter()
                 .any(|(_, rotation)| *rotation != Rotation::cur()),
             "Rotated query to instance column is not yet implemented"
-        );
-        assert_eq!(
-            scheme,
-            BatchOpenScheme::Bdfg21,
-            "BatchOpenScheme::Gwc19 is not yet implemented"
         );
 
         Self {
@@ -237,7 +228,7 @@ impl<'a> SolidityGenerator<'a> {
 
         let vk = self.generate_vk();
         let vk_len = vk.len();
-        let vk_mptr = Ptr::memory(self.estimate_static_working_memory_size(&vk, proof_cptr));
+        let vk_mptr = Ptr::memory(self.static_working_memory_size(&vk, proof_cptr));
         let data = Data::new(&self.meta, &vk, vk_mptr, proof_cptr);
 
         let evaluator = Evaluator::new(self.vk.cs(), &self.meta, &data);
@@ -260,10 +251,7 @@ impl<'a> SolidityGenerator<'a> {
         })
         .collect();
 
-        let pcs_computations = match self.scheme {
-            Bdfg21 => bdfg21_computations(&self.meta, &data),
-            Gwc19 => unimplemented!(),
-        };
+        let pcs_computations = self.scheme.computations(&self.meta, &data);
 
         Halo2Verifier {
             scheme: self.scheme,
@@ -273,6 +261,7 @@ impl<'a> SolidityGenerator<'a> {
             num_neg_lagranges: self.meta.rotation_last.unsigned_abs() as usize,
             num_advices: self.meta.num_advices(),
             num_challenges: self.meta.num_challenges(),
+            num_rotations: self.meta.num_rotations,
             num_evals: self.meta.num_evals,
             num_quotients: self.meta.num_quotients,
             proof_cptr,
@@ -285,20 +274,11 @@ impl<'a> SolidityGenerator<'a> {
         }
     }
 
-    fn estimate_static_working_memory_size(
-        &self,
-        vk: &Halo2VerifyingKey,
-        proof_cptr: Ptr,
-    ) -> usize {
-        let pcs_computation = match self.scheme {
-            Bdfg21 => {
-                let mock_vk_mptr = Ptr::memory(0x100000);
-                let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr);
-                let (superset, sets) = rotation_sets(&queries(&self.meta, &mock));
-                let num_coeffs = sets.iter().map(|set| set.rots().len()).sum::<usize>();
-                2 * (1 + num_coeffs) + 6 + 2 * superset.len() + 1 + 3 * sets.len()
-            }
-            Gwc19 => unimplemented!(),
+    fn static_working_memory_size(&self, vk: &Halo2VerifyingKey, proof_cptr: Ptr) -> usize {
+        let pcs_computation = {
+            let mock_vk_mptr = Ptr::memory(0x100000);
+            let mock = Data::new(&self.meta, vk, mock_vk_mptr, proof_cptr);
+            self.scheme.static_working_memory_size(&self.meta, &mock)
         };
 
         itertools::max([
