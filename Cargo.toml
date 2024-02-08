@@ -4,15 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20" }
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v0.3.0" }
 askama = { version = "0.12.0", features = ["config"], default-features = false }
 hex = "0.4.3"
 ruint = "1"
 sha3 = "0.10"
 itertools = "0.11.0"
-
-# Remove when `vk.transcript_repr()` is ready for usage.
-blake2b_simd = "1"
 
 # For feature = "evm"
 revm = { version = "3.3.0", default-features = false, optional = true }
@@ -20,7 +17,7 @@ revm = { version = "3.3.0", default-features = false, optional = true }
 [dev-dependencies]
 rand = "0.8.5"
 revm = { version = "3.3.0", default-features = false }
-halo2_maingate = { git = "https://github.com/privacy-scaling-explorations/halo2wrong", tag = "v2023_04_20", package = "maingate" }
+halo2_maingate = { git = "https://github.com/privacy-scaling-explorations/halo2wrong", tag = "v2024_01_31", package = "maingate" }
 
 [features]
 default = []
